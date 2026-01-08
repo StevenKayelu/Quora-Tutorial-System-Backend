@@ -1,7 +1,7 @@
 import TermTestModel from "../../models/TermTestModel.js";
 import { uploadToR2, deleteFromR2, getKeyFromUrl } from "../../utils/r2Upload.js";
 import { streamFromR2 } from "../../utils/r2Stream.js";
-import { PDFDocument } from "pdf-lib";
+import { getSignedUrlFromR2 } from "../../utils/r2SignedUrl.js";
 
 export default class TermTestController {
 
@@ -118,76 +118,52 @@ export default class TermTestController {
   // ---------------- PREVIEW ----------------
 async previewDocument(req, res) {
   try {
-  console.log("PREVIEW TERM TEST ID:", req.params.id);
-
-  const test = await TermTestModel.getById(req.params.id);
-  console.log("FOUND TEST:", test);
-
-
-    if (!test || !test.file_url) {
-      return res.status(404).json({
-        success: false,
-        message: "File not available",
-      });
+    const test = await TermTestModel.getById(req.params.id);
+    if (!test?.file_url) {
+      return res.status(404).json({ success: false, message: "File not found" });
     }
 
     const key = getKeyFromUrl(test.file_url);
-    const stream = await streamFromR2(key);
 
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", 'inline; filename="preview.pdf"');
-    res.setHeader("Cache-Control", "no-store");
-
-
-    stream.pipe(res);
-  } catch (err) {
-    console.error("Preview error:", err);
-    res.status(500).json({
-      success: false,
-      message: "Failed to preview document",
+    const url = await getSignedUrlFromR2(key, {
+      disposition: "inline",
+      filename: `${test.title || "test"}.pdf`,
+      expiresIn: 120,
     });
+
+    res.json({ success: true, url });
+  } catch (err) {
+    console.error("Preview test error:", err);
+    res.status(500).json({ success: false, message: "Failed to preview test" });
   }
 }
+
 
  // ---------------- DOWNLOAD (NO ENCRYPTION) ----------------
 async download(req, res) {
   try {
     const test = await TermTestModel.getById(req.params.id);
-
-    if (!test || !test.file_url) {
-      return res.status(404).json({
-        success: false,
-        message: "File not found",
-      });
+    if (!test?.file_url) {
+      return res.status(404).json({ success: false, message: "File not found" });
     }
 
     const key = getKeyFromUrl(test.file_url);
-    const stream = await streamFromR2(key);
-
-    // Safe filename
     const safeTitle =
-      (test.title || "test")
-        .replace(/[^\w\d-_]+/g, "_") + ".pdf";
+      (test.title || "test").replace(/[^\w\d-_]+/g, "_") + ".pdf";
 
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${safeTitle}"`
-    );
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("X-Content-Type-Options", "nosniff");
+    const url = await getSignedUrlFromR2(key, {
+      disposition: "attachment",
+      filename: safeTitle,
+      expiresIn: 120,
+    });
 
-    // ✅ Stream directly to response
-    stream.pipe(res);
-
+    res.json({ success: true, url });
   } catch (err) {
     console.error("Download test error:", err);
-    res.status(500).json({
-      success: false,
-      message: "Failed to download test",
-    });
+    res.status(500).json({ success: false, message: "Failed to download test" });
   }
 }
+
 
   // ---------------- GET BY COURSE & TERM ----------------
   async getByCourseAndTerm(req, res) {
