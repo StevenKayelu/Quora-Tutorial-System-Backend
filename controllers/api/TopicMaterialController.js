@@ -1,7 +1,6 @@
 import TopicMaterialModel from "../../models/TopicMaterialModel.js";
 import { uploadToR2, deleteFromR2, getKeyFromUrl } from "../../utils/r2Upload.js";
-import { streamFromR2 } from "../../utils/r2Stream.js";
-import { PDFDocument } from "pdf-lib";
+import { getSignedUrlFromR2 } from "../../utils/r2SignedUrl.js";
 
 
 export default class TopicMaterialController {
@@ -84,72 +83,52 @@ async update(req, res) {
 async previewDocument(req, res) {
   try {
     const material = await TopicMaterialModel.getById(req.params.id);
-
-    if (!material || !material.file_url) {
-      return res.status(404).json({
-        success: false,
-        message: "Document not available",
-      });
+    if (!material?.file_url) {
+      return res.status(404).json({ success: false, message: "File not found" });
     }
 
     const key = getKeyFromUrl(material.file_url);
 
-    const stream = await streamFromR2(key);
-
-    res.setHeader("Content-Type", "application/pdf");
-    stream.pipe(res);
-
-  } catch (error) {
-    console.error("Preview error:", error);
-
-    res.status(404).json({
-      success: false,
-      message: "File not found in storage",
+    const url = await getSignedUrlFromR2(key, {
+      disposition: "inline",
+      filename: `${material.title || "material"}.pdf`,
+      expiresIn: 120,
     });
+
+    res.json({ success: true, url });
+  } catch (error) {
+    console.error("Preview material error:", error);
+    res.status(500).json({ success: false, message: "Failed to preview document" });
   }
 }
+
 
 // TopicController.js (or TopicMaterialController)
 
 async download(req, res) {
   try {
     const material = await TopicMaterialModel.getById(req.params.id);
-
-    if (!material || !material.file_url) {
-      return res.status(404).json({
-        success: false,
-        message: "Document not available",
-      });
+    if (!material?.file_url) {
+      return res.status(404).json({ success: false, message: "File not found" });
     }
 
     const key = getKeyFromUrl(material.file_url);
-
-    // 🔹 Stream directly from R2
-    const stream = await streamFromR2(key);
-
-    // 🔹 Safe filename
     const safeTitle =
-      (material.title || "document")
-        .replace(/[^\w\d-_]+/g, "_") + ".pdf";
+      (material.title || "material").replace(/[^\w\d-_]+/g, "_") + ".pdf";
 
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${safeTitle}"`
-    );
-    res.setHeader("Cache-Control", "no-store");
-
-    // 🔹 Pipe stream to response
-    stream.pipe(res);
-
-  } catch (error) {
-    console.error("Download error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to download document",
+    const url = await getSignedUrlFromR2(key, {
+      disposition: "attachment",
+      filename: safeTitle,
+      expiresIn: 120,
     });
+
+    res.json({ success: true, url });
+  } catch (error) {
+    console.error("Download material error:", error);
+    res.status(500).json({ success: false, message: "Failed to download document" });
   }
 }
+
 
 
 async getAll(req, res) {
@@ -213,4 +192,3 @@ async getById(req, res) {
     }
   }
 }
-
