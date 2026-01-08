@@ -1,8 +1,6 @@
 import TermTutorialSheetModel from "../../models/TermTutorialSheetModel.js";
 import { uploadToR2, deleteFromR2, getKeyFromUrl } from "../../utils/r2Upload.js";
-import { streamFromR2 } from "../../utils/r2Stream.js";
 import { getSignedUrlFromR2 } from "../../utils/r2SignedUrl.js";
-import { PDFDocument } from "pdf-lib";
 
 export default class TermTutorialSheetController {
 
