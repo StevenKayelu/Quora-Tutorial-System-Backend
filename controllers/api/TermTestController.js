@@ -1,6 +1,5 @@
 import TermTestModel from "../../models/TermTestModel.js";
 import { uploadToR2, deleteFromR2, getKeyFromUrl } from "../../utils/r2Upload.js";
-import { streamFromR2 } from "../../utils/r2Stream.js";
 import { getSignedUrlFromR2 } from "../../utils/r2SignedUrl.js";
 
 export default class TermTestController {
