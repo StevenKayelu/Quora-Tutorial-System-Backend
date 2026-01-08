@@ -1,7 +1,7 @@
 import TermTutorialSheetModel from "../../models/TermTutorialSheetModel.js";
 import { uploadToR2, deleteFromR2, getKeyFromUrl } from "../../utils/r2Upload.js";
 import { streamFromR2 } from "../../utils/r2Stream.js";
-import { encryptPdf } from "../../utils/encryptPdf.js"; // if you want encrypted downloads
+import { getSignedUrlFromR2 } from "../../utils/r2SignedUrl.js";
 import { PDFDocument } from "pdf-lib";
 
 export default class TermTutorialSheetController {
@@ -132,49 +132,52 @@ export default class TermTutorialSheetController {
   }
 
   // ---------------- PREVIEW ----------------
-  async previewDocument(req, res) {
-    try {
-      const sheet = await TermTutorialSheetModel.getById(req.params.id);
-      if (!sheet?.file_url) return res.status(404).json({ success: false, message: "File not found" });
-
-      const key = getKeyFromUrl(sheet.file_url);
-    
-      const stream = await streamFromR2(key);
-      res.setHeader("Content-Type", "application/pdf");
-      stream.pipe(res);
-    } catch (err) {
-      console.error("Preview tutorial sheet error:", err);
-      res.status(500).json({ success: false, message: "Failed to preview file" });
+async previewDocument(req, res) {
+  try {
+    const sheet = await TermTutorialSheetModel.getById(req.params.id);
+    if (!sheet?.file_url) {
+      return res.status(404).json({ success: false, message: "File not found" });
     }
+
+    const key = getKeyFromUrl(sheet.file_url);
+
+    const url = await getSignedUrlFromR2(key, {
+      disposition: "inline",
+      filename: `${sheet.title || "tutorial_sheet"}.pdf`,
+      expiresIn: 120,
+    });
+
+    res.json({ success: true, url });
+  } catch (err) {
+    console.error("Preview error:", err);
+    res.status(500).json({ success: false, message: "Failed to preview file" });
   }
+}
+
 
   // ---------------- DOWNLOAD (optional encrypted) ----------------
-  async download(req, res) {
-    try {
-      const sheet = await TermTutorialSheetModel.getById(req.params.id);
-      if (!sheet?.file_url) return res.status(404).json({ success: false, message: "File not found" });
-
-      const r2Stream = await streamFromR2(getKeyFromUrl(sheet.file_url));
-      const chunks = [];
-      for await (const chunk of r2Stream) chunks.push(chunk);
-      const pdfBuffer = Buffer.concat(chunks);
-
-      // Optional encryption
-      const pdfDoc = await PDFDocument.load(pdfBuffer);
-      const password = String(req.user.id); // use user id as password
-      const encryptedPdf = await pdfDoc.save({
-        userPassword: password,
-        ownerPassword: password,
-      });
-
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", 'inline; filename="preview.pdf"');
-      res.setHeader("Cache-Control", "no-store");
-
-      res.send(Buffer.from(encryptedPdf));
-    } catch (err) {
-      console.error("Download tutorial sheet error:", err);
-      res.status(500).json({ success: false, message: "Failed to download file" });
+async download(req, res) {
+  try {
+    const sheet = await TermTutorialSheetModel.getById(req.params.id);
+    if (!sheet?.file_url) {
+      return res.status(404).json({ success: false, message: "File not found" });
     }
+
+    const key = getKeyFromUrl(sheet.file_url);
+    const safeTitle =
+      (sheet.title || "tutorial_sheet").replace(/[^\w\d-_]+/g, "_") + ".pdf";
+
+    const url = await getSignedUrlFromR2(key, {
+      disposition: "attachment",
+      filename: safeTitle,
+      expiresIn: 120,
+    });
+
+    res.json({ success: true, url });
+  } catch (err) {
+    console.error("Download error:", err);
+    res.status(500).json({ success: false, message: "Failed to download file" });
   }
+}
+
 }
