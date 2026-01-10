@@ -96,7 +96,7 @@ async update(req, res) {
     const oldImages = JSON.parse(existing.coursera_images || "[]");
     const newImages = [];
     for (const file of req.files.coursera_images) {
-      const url = await uploadToR2(file, "system-info/coursera");
+      const url = await uploadImageToR2(file, "system-info/coursera");
       newImages.push(url);
     }
     coursera_images = JSON.stringify([...oldImages, ...newImages]);
