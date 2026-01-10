@@ -1,11 +1,14 @@
 import pool from "../config/db.js";
 
+// Get latest system info
 export const getSystemInfo = async () => {
   const [rows] = await pool.query(
     "SELECT * FROM system_info ORDER BY id DESC LIMIT 1"
   );
   return rows[0] || null;
 };
+
+// Create new system info
 export const createSystemInfo = async (info) => {
   const {
     system_name,
@@ -42,6 +45,8 @@ export const createSystemInfo = async (info) => {
 
   return result.insertId;
 };
+
+// Update system info
 export const updateSystemInfo = async (id, data) => {
   const fields = [];
   const values = [];
@@ -50,7 +55,8 @@ export const updateSystemInfo = async (id, data) => {
     if (value !== undefined) {
       fields.push(`${key} = ?`);
       if (key === "coursera_images") {
-        values.push(JSON.stringify(value));
+        // ✅ Guard against double stringify
+        values.push(typeof value === "string" ? value : JSON.stringify(value));
       } else {
         values.push(value);
       }
@@ -69,6 +75,8 @@ export const updateSystemInfo = async (id, data) => {
   const [result] = await pool.query(query, values);
   return result.affectedRows > 0;
 };
+
+// Delete system info
 export const deleteSystemInfo = async (id) => {
   const [result] = await pool.query(
     "DELETE FROM system_info WHERE id = ?",
@@ -77,6 +85,7 @@ export const deleteSystemInfo = async (id) => {
   return result.affectedRows > 0;
 };
 
+// Get system info by id
 export const getSystemInfoById = async (id) => {
   const [rows] = await pool.query(
     "SELECT * FROM system_info WHERE id = ?",
