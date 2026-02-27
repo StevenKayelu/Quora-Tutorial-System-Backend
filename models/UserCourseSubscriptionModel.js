@@ -3,7 +3,7 @@ import pool from "../config/db.js";
 export default class UserCourseSubscriptionModel {
 
   // =====================================
-  // ADMIN: Get all users with subscriptions
+  // ADMIN: Get all users with active subscriptions
   // =====================================
   static async getUsersWithSubscriptions() {
     const [rows] = await pool.query(`
@@ -27,6 +27,8 @@ export default class UserCourseSubscriptionModel {
         ON c.id = ucs.course_id
       JOIN term t
         ON t.id = ucs.term_id
+      WHERE ucs.status = 'active'
+        AND ucs.expires_at >= CURDATE()  -- Only active, non-expired
       ORDER BY u.u_user_id, ucs.subscribed_at DESC
     `);
 
@@ -34,7 +36,7 @@ export default class UserCourseSubscriptionModel {
   }
 
   // =====================================
-  // ADMIN: Get subscriptions for one user
+  // ADMIN: Get active subscriptions for one user
   // =====================================
   static async getByUser(userId) {
     const [rows] = await pool.query(`
@@ -53,6 +55,8 @@ export default class UserCourseSubscriptionModel {
       JOIN courses c ON c.id = ucs.course_id
       JOIN term t ON t.id = ucs.term_id
       WHERE ucs.user_id = ?
+        AND ucs.status = 'active'
+        AND ucs.expires_at >= CURDATE()  -- Only active, non-expired
       ORDER BY ucs.subscribed_at DESC
     `, [userId]);
 
