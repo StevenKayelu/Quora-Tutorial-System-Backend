@@ -88,14 +88,14 @@ export default class UserCourseSubscriptionController {
   static async getMyCourseIds(req, res) {
     try {
       const userId = req.user.id;
-
       const [rows] = await db.query(`
         SELECT course_id
         FROM user_course_subscription
         WHERE user_id = ?
+          AND status = 'active'
           AND expires_at >= CURDATE()
       `, [userId]);
-
+      
       const courseIds = rows.map(r => r.course_id);
 
       res.json({ success: true, data: courseIds });
