@@ -125,122 +125,138 @@ export default class PaymentModel {
    * - Sets expires_at using course duration
    * - Safe + Idempotent
    */
-  static async finalizeTransaction(
-    transaction_id,
-    payment_status,
-    provider_transaction_id = null
-  ) {
-    const conn = await pool.getConnection();
+ /**
+ * Finalize payment (TERM-BASED VERSION)
+ */
+static async finalizeTransaction(
+  transaction_id,
+  payment_status,
+  provider_transaction_id = null
+) {
+  const conn = await pool.getConnection();
 
-    try {
-      await conn.beginTransaction();
+  try {
+    await conn.beginTransaction();
 
-      // 1️⃣ Lock transaction
-      const [txRows] = await conn.query(`
-        SELECT user_id, payment_status
-        FROM payment_transaction
-        WHERE transaction_id=?
-        FOR UPDATE
+    // 1️⃣ Lock transaction
+    const [txRows] = await conn.query(`
+      SELECT user_id, payment_status
+      FROM payment_transaction
+      WHERE transaction_id=?
+      FOR UPDATE
+    `, [transaction_id]);
+
+    if (!txRows.length) {
+      throw new Error("Transaction not found");
+    }
+
+    // Prevent double processing
+    if (["success", "failed"].includes(txRows[0].payment_status)) {
+      await conn.commit();
+      return;
+    }
+
+    const user_id = txRows[0].user_id;
+
+    // 2️⃣ Update transaction status
+    await conn.query(`
+      UPDATE payment_transaction
+      SET
+        payment_status=?,
+        provider_transaction_id=?,
+        paid_at=IF(?='success', NOW(), NULL)
+      WHERE transaction_id=?
+    `, [
+      payment_status,
+      provider_transaction_id,
+      payment_status,
+      transaction_id
+    ]);
+
+    // 3️⃣ Activate subscriptions if payment success
+    if (payment_status === "success") {
+
+      // 🔹 Get ACTIVE TERM
+      const [termRows] = await conn.query(`
+        SELECT id, end_date
+        FROM term
+        WHERE start_date <= CURDATE()
+          AND end_date >= CURDATE()
+        LIMIT 1
+      `);
+
+      if (!termRows.length) {
+        throw new Error("No active academic term found");
+      }
+
+      const { id: term_id, end_date } = termRows[0];
+
+      // 🔹 Get purchased courses
+      const [courses] = await conn.query(`
+        SELECT c.id
+        FROM payment_transaction_courses ptc
+        JOIN courses c ON ptc.course_id = c.id
+        WHERE ptc.transaction_id=?
       `, [transaction_id]);
 
-      if (!txRows.length) {
-        throw new Error("Transaction not found");
-      }
+      for (const { id: course_id } of courses) {
 
-      // Prevent double-processing
-      if (["success", "failed"].includes(txRows[0].payment_status)) {
-        await conn.commit();
-        return;
-      }
-
-      const user_id = txRows[0].user_id;
-
-      // 2️⃣ Update transaction status
-      await conn.query(`
-        UPDATE payment_transaction
-        SET
-          payment_status=?,
-          provider_transaction_id=?,
-          paid_at=IF(?='success', NOW(), NULL)
-        WHERE transaction_id=?
-      `, [
-        payment_status,
-        provider_transaction_id,
-        payment_status,
-        transaction_id
-      ]);
-
-      /**
-       * 3️⃣ Activate subscriptions only if successful
-       */
-      if (payment_status === "success") {
-
-        const [courses] = await conn.query(`
-          SELECT c.id, c.duration_days
-          FROM payment_transaction_courses ptc
-          JOIN courses c ON ptc.course_id = c.id
-          WHERE ptc.transaction_id=?
-        `, [transaction_id]);
-
-        for (const { id: course_id, duration_days } of courses) {
-
-          const expiresAtQuery =
-            duration_days && duration_days > 0
-              ? `DATE_ADD(NOW(), INTERVAL ${duration_days} DAY)`
-              : `NULL`;
-
-          const [existing] = await conn.query(`
-            SELECT id
-            FROM user_course_subscription
-            WHERE user_id=? AND course_id=?
-            LIMIT 1
-          `, [user_id, course_id]);
-
-          if (!existing.length) {
-            // Insert new subscription
-            await conn.query(`
-              INSERT INTO user_course_subscription
-              (user_id, course_id, subscribed_at, expires_at, status, source)
-              VALUES (?, ?, NOW(), ${expiresAtQuery}, 'active', 'payment')
-            `, [user_id, course_id]);
-          } else {
-            // Renew existing subscription
-            await conn.query(`
-              UPDATE user_course_subscription
-              SET
-                status='active',
-                subscribed_at=NOW(),
-                expires_at=${expiresAtQuery},
-                source='payment'
-              WHERE id=?
-            `, [existing[0].id]);
-          }
-        }
-
-        // 4️⃣ Update overall user subscription status
-        const [[{ activeCount }]] = await conn.query(`
-          SELECT COUNT(*) AS activeCount
+        // Check if subscription already exists for this term
+        const [existing] = await conn.query(`
+          SELECT id
           FROM user_course_subscription
-          WHERE user_id=? AND status='active'
-        `, [user_id]);
+          WHERE user_id=? 
+            AND course_id=? 
+            AND term_id=?
+          LIMIT 1
+        `, [user_id, course_id, term_id]);
 
-        await conn.query(`
-          UPDATE user
-          SET u_status=?
-          WHERE u_user_id=?
-        `, [activeCount > 0 ? "subscribed" : "inactive", user_id]);
+        if (!existing.length) {
+          // Insert new subscription
+          await conn.query(`
+            INSERT INTO user_course_subscription
+            (user_id, course_id, term_id, subscribed_at, expires_at, status, source)
+            VALUES (?, ?, ?, NOW(), ?, 'active', 'payment')
+          `, [user_id, course_id, term_id, end_date]);
+        } else {
+          // Renew existing subscription for same term
+          await conn.query(`
+            UPDATE user_course_subscription
+            SET
+              status='active',
+              subscribed_at=NOW(),
+              expires_at=?,
+              source='payment'
+            WHERE id=?
+          `, [end_date, existing[0].id]);
+        }
       }
 
-      await conn.commit();
+      // 4️⃣ Update overall user subscription status
+      const [[{ activeCount }]] = await conn.query(`
+        SELECT COUNT(*) AS activeCount
+        FROM user_course_subscription
+        WHERE user_id=? 
+          AND status='active'
+          AND expires_at >= CURDATE()
+      `, [user_id]);
 
-    } catch (err) {
-      await conn.rollback();
-      throw err;
-    } finally {
-      conn.release();
+      await conn.query(`
+        UPDATE user
+        SET u_status=?
+        WHERE u_user_id=?
+      `, [activeCount > 0 ? "subscribed" : "inactive", user_id]);
     }
-  }
 
+    await conn.commit();
+
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
   /**
    * Get all transactions with user info
    */
