@@ -11,7 +11,11 @@ export default class UserCourseModel {
       FROM school s
       JOIN courses c ON c.school_id = s.id
       JOIN user_course_subscription ucs ON ucs.course_id = c.id
-      WHERE ucs.user_id=? AND ucs.status='active'
+      WHERE ucs.user_id=?
+      AND (
+            (ucs.status='active' AND ucs.expires_at >= CURDATE())
+         OR (ucs.expires_at < CURDATE())
+      )
       ORDER BY s.school_name ASC
     `, [userId]);
 
@@ -21,31 +25,46 @@ export default class UserCourseModel {
   /**
    * Get all courses by school for the user
    */
-  async getCoursesByUserAndSchool(userId, schoolId) {
-    const [rows] = await db.query(`
-      SELECT c.id, c.course_name, c.course_description
-      FROM courses c
-      JOIN user_course_subscription ucs ON ucs.course_id = c.id
-      WHERE ucs.user_id=? AND ucs.status='active' AND c.school_id=?
-      ORDER BY c.course_name ASC
-    `, [userId, schoolId]);
+ async getCoursesByUserAndSchool(userId, schoolId) {
+  const [rows] = await db.query(`
+    SELECT 
+      c.id,
+      c.course_name,
+      c.course_description,
+      ucs.status,
+      ucs.expires_at,
+      CASE 
+        WHEN ucs.expires_at < CURDATE() THEN 'expired'
+        WHEN ucs.status='active' AND ucs.expires_at >= CURDATE() THEN 'active'
+        ELSE 'inactive'
+      END AS subscription_status
+    FROM courses c
+    JOIN user_course_subscription ucs 
+      ON ucs.course_id = c.id
+    WHERE ucs.user_id=?
+      AND c.school_id=?
+    ORDER BY c.course_name ASC
+  `, [userId, schoolId]);
 
-    return rows;
-  }
+  return rows;
+}
 
   /**
    * Check if a user is subscribed to a course
    */
   async isUserSubscribedToCourse(userId, courseId) {
-    const [rows] = await db.query(`
-      SELECT id
-      FROM user_course_subscription
-      WHERE user_id=? AND course_id=? AND status='active'
-    `, [userId, courseId]);
+  const [rows] = await db.query(`
+    SELECT id
+    FROM user_course_subscription
+    WHERE user_id=?
+      AND course_id=?
+      AND status='active'
+      AND expires_at >= CURDATE()
+    LIMIT 1
+  `, [userId, courseId]);
 
-    return rows.length > 0;
-  }
-
+  return rows.length > 0;
+}
   /**
    * Get full course structure (terms → topics → subtopics → materials)
    */
