@@ -70,7 +70,12 @@ export default class UserCourseModel {
    */
   async getCourseStructure(userId, courseId) {
     const isSubscribed = await this.isUserSubscribedToCourse(userId, courseId);
-    if (!isSubscribed) return null;
+   if (!isSubscribed) {
+  return {
+    access: false,
+    reason: "expired_or_not_subscribed"
+  };
+}
 
     const [terms] = await db.query(`
       SELECT DISTINCT t.id, t.term_number, t.start_date, t.end_date
