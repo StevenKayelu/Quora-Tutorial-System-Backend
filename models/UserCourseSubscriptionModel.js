@@ -109,19 +109,20 @@ export default class UserCourseSubscriptionModel {
   // =====================================
   // CHECK active subscription (respects expiry)
   // =====================================
-  static async exists(user_id, course_id) {
-    const [rows] = await pool.query(`
-      SELECT 1
-      FROM user_course_subscription
-      WHERE user_id = ?
-        AND course_id = ?
-        AND status = 'active'
-        AND expires_at >= CURDATE()
-      LIMIT 1
-    `, [user_id, course_id]);
 
-    return rows.length > 0;
-  }
+  static async exists(user_id, course_id, term_id) {
+  const [rows] = await pool.query(`
+    SELECT 1
+    FROM user_course_subscription
+    WHERE user_id = ?
+      AND course_id = ?
+      AND term_id = ?
+      AND expires_at >= CURDATE()
+    LIMIT 1
+  `, [user_id, course_id, term_id]);
+
+  return rows.length > 0;
+}
 
   // =====================================
   // AUTO-EXPIRE subscriptions
