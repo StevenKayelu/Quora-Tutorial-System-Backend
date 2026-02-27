@@ -27,8 +27,6 @@ export default class UserCourseSubscriptionModel {
         ON c.id = ucs.course_id
       JOIN term t
         ON t.id = ucs.term_id
-      WHERE ucs.status = 'active'
-        AND ucs.expires_at >= CURDATE()  -- Only active, non-expired
       ORDER BY u.u_user_id, ucs.subscribed_at DESC
     `);
 
