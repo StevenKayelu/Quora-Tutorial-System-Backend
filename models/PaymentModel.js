@@ -1,13 +1,30 @@
-import pool from "../config/db.js"; 
+// models/PaymentModel.js
+import pool from "../config/db.js";
 
+/**
+ * PaymentModel
+ *
+ * Handles:
+ * - Creating transactions (MoneyUnify REQUEST ID based)
+ * - Finalizing payments
+ * - Term-based subscription activation
+ * - Expiry-aware logic (cron compatible)
+ * - Safe deletion rollback
+ *
+ * IMPORTANT:
+ * user_course_subscription table MUST contain:
+ *   - expires_at DATETIME NULL
+ *   - source VARCHAR(50) DEFAULT 'payment'
+ */
 
 export default class PaymentModel {
 
   /**
-   * Create a payment transaction and associate courses
-   * - Stores ONLY the MoneyUnify REQUEST transaction_id
+   * Create payment transaction
+   * - Stores ONLY MoneyUnify REQUEST transaction_id
+   * - Idempotent (safe retry)
    * - Validates course IDs
-   * - Atomic (safe rollback)
+   * - Atomic
    */
   static async createTransaction({
     user_id,
@@ -16,7 +33,7 @@ export default class PaymentModel {
     currency,
     payment_method,
     gateway_id,
-    transaction_id, // 🔑 MoneyUnify REQUEST ID
+    transaction_id, // MoneyUnify REQUEST ID
     response_data
   }) {
     const conn = await pool.getConnection();
@@ -24,7 +41,7 @@ export default class PaymentModel {
     try {
       await conn.beginTransaction();
 
-      // 1️⃣ Insert main transaction (idempotent)
+      // 1️⃣ Insert transaction (idempotent)
       await conn.query(`
         INSERT INTO payment_transaction
         (
@@ -51,8 +68,9 @@ export default class PaymentModel {
         JSON.stringify(response_data)
       ]);
 
-      // 2️⃣ Validate courses exist
+      // 2️⃣ Validate courses
       if (courses.length > 0) {
+
         const [validCourses] = await conn.query(
           `SELECT id FROM courses WHERE id IN (?)`,
           [courses]
@@ -100,10 +118,12 @@ export default class PaymentModel {
 
   /**
    * Finalize payment
-   * - Updates status
-   * - Stores PROVIDER transaction ID (LP...)
-   * - Activates subscriptions
-   * - Idempotent & safe
+   *
+   * - Locks transaction row
+   * - Updates payment status
+   * - Activates term-based subscriptions
+   * - Sets expires_at using course duration
+   * - Safe + Idempotent
    */
   static async finalizeTransaction(
     transaction_id,
@@ -115,7 +135,7 @@ export default class PaymentModel {
     try {
       await conn.beginTransaction();
 
-      // 1️⃣ Lock transaction row
+      // 1️⃣ Lock transaction
       const [txRows] = await conn.query(`
         SELECT user_id, payment_status
         FROM payment_transaction
@@ -127,16 +147,15 @@ export default class PaymentModel {
         throw new Error("Transaction not found");
       }
 
-      // Already finalized → STOP
-      if (txRows[0].payment_status === "success" ||
-          txRows[0].payment_status === "failed") {
+      // Prevent double-processing
+      if (["success", "failed"].includes(txRows[0].payment_status)) {
         await conn.commit();
         return;
       }
 
       const user_id = txRows[0].user_id;
 
-      // 2️⃣ Update transaction
+      // 2️⃣ Update transaction status
       await conn.query(`
         UPDATE payment_transaction
         SET
@@ -151,42 +170,54 @@ export default class PaymentModel {
         transaction_id
       ]);
 
-      // 3️⃣ Activate subscriptions ONLY on success
+      /**
+       * 3️⃣ Activate subscriptions only if successful
+       */
       if (payment_status === "success") {
 
         const [courses] = await conn.query(`
-          SELECT course_id
-          FROM payment_transaction_courses
-          WHERE transaction_id=?
+          SELECT c.id, c.duration_days
+          FROM payment_transaction_courses ptc
+          JOIN courses c ON ptc.course_id = c.id
+          WHERE ptc.transaction_id=?
         `, [transaction_id]);
 
-        for (const { course_id } of courses) {
-            const [existing] = await conn.query(`
-              SELECT id
-              FROM user_course_subscription
-              WHERE user_id=? AND course_id=?
-              LIMIT 1
+        for (const { id: course_id, duration_days } of courses) {
+
+          const expiresAtQuery =
+            duration_days && duration_days > 0
+              ? `DATE_ADD(NOW(), INTERVAL ${duration_days} DAY)`
+              : `NULL`;
+
+          const [existing] = await conn.query(`
+            SELECT id
+            FROM user_course_subscription
+            WHERE user_id=? AND course_id=?
+            LIMIT 1
+          `, [user_id, course_id]);
+
+          if (!existing.length) {
+            // Insert new subscription
+            await conn.query(`
+              INSERT INTO user_course_subscription
+              (user_id, course_id, subscribed_at, expires_at, status, source)
+              VALUES (?, ?, NOW(), ${expiresAtQuery}, 'active', 'payment')
             `, [user_id, course_id]);
-
-            if (!existing.length) {
-              // Insert new subscription
-              await conn.query(`
-                INSERT INTO user_course_subscription
-                (user_id, course_id, subscribed_at, status)
-                VALUES (?, ?, NOW(), 'active')
-              `, [user_id, course_id]);
-            } else {
-              // Update existing subscription safely
-              await conn.query(`
-                UPDATE user_course_subscription
-                SET status='active', subscribed_at=NOW()
-                WHERE id=?
-              `, [existing[0].id]);
-            }
+          } else {
+            // Renew existing subscription
+            await conn.query(`
+              UPDATE user_course_subscription
+              SET
+                status='active',
+                subscribed_at=NOW(),
+                expires_at=${expiresAtQuery},
+                source='payment'
+              WHERE id=?
+            `, [existing[0].id]);
           }
+        }
 
-
-        // 4️⃣ Update user overall subscription status
+        // 4️⃣ Update overall user subscription status
         const [[{ activeCount }]] = await conn.query(`
           SELECT COUNT(*) AS activeCount
           FROM user_course_subscription
@@ -211,7 +242,7 @@ export default class PaymentModel {
   }
 
   /**
-   * Fetch all transactions with their courses
+   * Get all transactions with user info
    */
   static async getAll() {
     const [transactions] = await pool.query(`
@@ -236,5 +267,67 @@ export default class PaymentModel {
     }
 
     return transactions;
+  }
+
+  /**
+   * Delete transaction safely
+   * - Removes subscriptions created by this payment
+   * - Rolls back fully if error
+   */
+  static async deleteById(id) {
+    const connection = await pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      const [[transaction]] = await connection.query(
+        `SELECT id, user_id, transaction_id
+         FROM payment_transaction
+         WHERE id = ?`,
+        [id]
+      );
+
+      if (!transaction) {
+        await connection.rollback();
+        return 0;
+      }
+
+      const [courses] = await connection.query(
+        `SELECT course_id
+         FROM payment_transaction_courses
+         WHERE transaction_id = ?`,
+        [transaction.transaction_id]
+      );
+
+      const courseIds = courses.map(c => c.course_id);
+
+      if (courseIds.length > 0) {
+        await connection.query(`
+          DELETE FROM user_course_subscription
+          WHERE user_id = ?
+            AND course_id IN (?)
+            AND source = 'payment'
+        `, [transaction.user_id, courseIds]);
+      }
+
+      await connection.query(
+        `DELETE FROM payment_transaction_courses WHERE transaction_id = ?`,
+        [transaction.transaction_id]
+      );
+
+      const [result] = await connection.query(
+        `DELETE FROM payment_transaction WHERE id = ?`,
+        [id]
+      );
+
+      await connection.commit();
+      return result.affectedRows;
+
+    } catch (err) {
+      await connection.rollback();
+      throw err;
+    } finally {
+      connection.release();
+    }
   }
 }
