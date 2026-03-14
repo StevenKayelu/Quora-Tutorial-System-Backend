@@ -6,33 +6,40 @@ export default class UserCourseSubscriptionModel {
   // ADMIN: Get all users with active subscriptions
   // =====================================
   static async getUsersWithSubscriptions() {
-    const [rows] = await pool.query(`
-      SELECT
-        u.u_user_id AS user_id,
-        CONCAT(u.first_name, ' ', u.last_name) AS user_name,
-        c.id AS course_id,
-        c.course_name AS course_title,
-        t.term_number,
-        t.start_date,
-        t.end_date,
-        ucs.id AS subscription_id,
-        ucs.status,
-        ucs.subscribed_at,
-        ucs.expires_at,
-        ucs.source
-      FROM user_course_subscription ucs
-      JOIN user u 
-        ON u.u_user_id = CAST(ucs.user_id AS UNSIGNED)
-      JOIN courses c 
-        ON c.id = ucs.course_id
-      JOIN term t
-        ON t.id = ucs.term_id
-      ORDER BY u.u_user_id, ucs.subscribed_at DESC
-    `);
+  const [rows] = await pool.query(`
+    SELECT
+      u.u_user_id AS user_id,
+      CONCAT(u.first_name, ' ', u.last_name) AS user_name,
 
-    return rows;
-  }
+      c.id AS course_id,
+      c.course_name AS course_title,
 
+      t.term_number,
+      t.start_date,
+      t.end_date,
+
+      ucs.id AS subscription_id,
+      ucs.status,
+      ucs.subscribed_at,
+      ucs.expires_at,
+      ucs.source
+
+    FROM user u
+
+    LEFT JOIN user_course_subscription ucs
+      ON u.u_user_id = CAST(ucs.user_id AS UNSIGNED)
+
+    LEFT JOIN courses c
+      ON c.id = ucs.course_id
+
+    LEFT JOIN term t
+      ON t.id = ucs.term_id
+
+    ORDER BY u.u_user_id, ucs.subscribed_at DESC
+  `);
+
+  return rows;
+}
   // =====================================
   // ADMIN: Get active subscriptions for one user
   // =====================================
