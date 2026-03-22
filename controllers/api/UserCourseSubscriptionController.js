@@ -85,26 +85,45 @@ export default class UserCourseSubscriptionController {
   // =====================================
   // USER: Get only ACTIVE course IDs
   // =====================================
-  static async getMyCourseIds(req, res) {
-    try {
-      const userId = req.user.id;
-      const [rows] = await db.query(`
-        SELECT course_id
-        FROM user_course_subscription
-        WHERE user_id = ?
-          AND status = 'active'
-          AND expires_at >= CURDATE()
-      `, [userId]);
-      
-      const courseIds = rows.map(r => r.course_id);
+static async getMyCourseIds(req, res) {
+  try {
+    const userId = req.user.id;
 
-      res.json({ success: true, data: courseIds });
+    // 1️⃣ Get latest active term for user
+    const [[latest]] = await db.query(`
+      SELECT t.term_number
+      FROM user_course_subscription ucs
+      JOIN term t ON t.id = ucs.term_id
+      WHERE ucs.user_id = ?
+        AND ucs.status = 'active'
+        AND ucs.expires_at >= CURDATE()
+      ORDER BY t.term_number DESC
+      LIMIT 1
+    `, [userId]);
 
-    } catch (err) {
-      console.error("getMyCourseIds:", err);
-      res.status(500).json({ success: false, message: "Failed to fetch your subscriptions" });
+    if (!latest) {
+      return res.json({ success: true, data: [] });
     }
+
+    // 2️⃣ Get ALL courses from <= that term
+    const [rows] = await db.query(`
+      SELECT DISTINCT ucs.course_id
+      FROM user_course_subscription ucs
+      JOIN term t ON t.id = ucs.term_id
+      WHERE ucs.user_id = ?
+        AND ucs.status = 'active'
+        AND t.term_number <= ?
+    `, [userId, latest.term_number]);
+
+    const courseIds = rows.map(r => r.course_id);
+
+    res.json({ success: true, data: courseIds });
+
+  } catch (err) {
+    console.error("getMyCourseIds:", err);
+    res.status(500).json({ success: false });
   }
+}
 
   // =====================================
   // ADMIN: Update subscription status
