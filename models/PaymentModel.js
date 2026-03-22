@@ -104,6 +104,25 @@ export default class PaymentModel {
     }
   }
 
+  static async updateUserStatus(userId) {
+    // Example logic (adjust to your system)
+    const [rows] = await db.query(`
+      SELECT COUNT(*) as activeSubscriptions
+      FROM user_course_subscription
+      WHERE user_id = ?
+        AND status = 'active'
+        AND expires_at >= CURDATE()
+    `, [userId]);
+
+    const hasActive = rows[0].activeSubscriptions > 0;
+
+    await db.query(`
+      UPDATE user
+      SET subscription_status = ?
+      WHERE u_user_id = ?
+    `, [hasActive ? 'active' : 'inactive', userId]);
+  }
+
   /**
    * Fetch transaction by REQUEST transaction_id
    */
