@@ -103,8 +103,7 @@ export default class PaymentModel {
       conn.release();
     }
   }
-
- static async updateUserStatus(userId, connection = pool) {
+static async updateUserStatus(userId, connection = pool) {
   const [[{ count }]] = await connection.query(`
     SELECT COUNT(*) as count
     FROM user_course_subscription
@@ -115,9 +114,9 @@ export default class PaymentModel {
 
   await connection.query(`
     UPDATE user
-    SET subscription_status = ?
+    SET u_status = ?
     WHERE u_user_id = ?
-  `, [count > 0 ? 'active' : 'inactive', userId]);
+  `, [count > 0 ? 'subscribed' : 'inactive', userId]);
 }
 
   /**
