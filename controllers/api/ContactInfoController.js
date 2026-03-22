@@ -21,7 +21,7 @@ class ContactInfoController {
     info.social_links = Array.isArray(info.social_links)
       ? info.social_links
       : JSON.parse(info.social_links || "[]");
-	console.log("My Contact Info: ",info);
+
     res.json({ success: true, data: info });
   }
 
