@@ -1,0 +1,318 @@
+-- =====================================
+--  DATABASE: tutorial_system
+--  VERSION: 1.0
+--  DESIGN: 3NF Optimized
+-- =====================================
+
+-- Drop tables if they already exist (optional cleanup)
+SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS 
+  payment_transaction,
+  payment_gateway,
+  free_preview_log,
+  user_course_subscription,
+  material,
+  subtopic,
+  topic,
+  term,
+  course,
+  school,
+  system_info,
+  user;
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- ===============================
+-- 1️⃣ USER TABLE
+-- ===============================
+CREATE TABLE user (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  u_user_id VARCHAR(7) UNIQUE,
+  first_name VARCHAR(50),
+  last_name VARCHAR(50),
+  u_email VARCHAR(100) UNIQUE,
+  u_mobile BIGINT(10),
+  u_password VARCHAR(50),
+  u_image VARCHAR(150),
+  u_status ENUM('subscribed', 'unsubscribed') DEFAULT 'unsubscribed',
+  u_role TINYINT(1),  -- 0=student, 1=admin
+  u_created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  u_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- ===============================
+-- 2️⃣ SYSTEM INFO
+-- ===============================
+CREATE TABLE system_info (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  system_name VARCHAR(100),
+  logo VARCHAR(100),
+  favicon VARCHAR(100),
+  coursera_images LONGTEXT,
+  about_us TEXT,
+  terms_and_conditions LONGTEXT,
+  privacy_policy LONGTEXT,
+  contact_email VARCHAR(100),
+  contact_phone VARCHAR(10),
+  social_links LONGTEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- ===============================
+-- 3️⃣ SCHOOL
+-- ===============================
+CREATE TABLE school (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  school_name VARCHAR(100) UNIQUE,
+  school_description TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- ===============================
+-- 4️⃣ COURSE
+-- ===============================
+CREATE TABLE course (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  school_id INT,
+  course_code VARCHAR(50) UNIQUE,
+  course_name VARCHAR(100),
+  course_description TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (school_id) REFERENCES school(id)
+);
+
+-- ===============================
+-- 5️⃣ TERM
+-- ===============================
+CREATE TABLE term (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  term_number VARCHAR(50) UNIQUE,       -- e.g. Term 1, Term 2,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- ===============================
+-- 6️⃣ TOPIC
+-- ===============================
+CREATE TABLE topic (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  course_id INT,
+  term_id INT,
+  topic_title VARCHAR(255),
+  topic_description TEXT,
+  is_free BOOLEAN DEFAULT FALSE,   -- free-to-view preview
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (course_id) REFERENCES course(id),
+  FOREIGN KEY (term_id) REFERENCES term(id)
+);
+
+-- ===============================
+-- 7️⃣ SUBTOPIC
+-- ===============================
+CREATE TABLE subtopic (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  topic_id INT,
+  subtopic_title VARCHAR(255),
+  subtopic_description TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (topic_id) REFERENCES topic(id)
+);
+
+-- ===============================
+-- 8️⃣ MATERIAL
+-- ===============================
+CREATE TABLE material (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  topic_id INT NULL,
+  subtopic_id INT NULL,
+  video_url TEXT NULL,
+  video_description TEXT NULL,
+  document_url TEXT NULL,
+  document_description TEXT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (topic_id) REFERENCES topic(id),
+  FOREIGN KEY (subtopic_id) REFERENCES subtopic(id),
+  CHECK (
+    (topic_id IS NOT NULL AND subtopic_id IS NULL)
+    OR (topic_id IS NULL AND subtopic_id IS NOT NULL)
+  )
+);
+
+-- ===============================
+-- 9️⃣ USER COURSE SUBSCRIPTION
+-- ===============================
+CREATE TABLE user_course_subscription (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT,
+  course_id INT,
+  subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NULL,
+  status ENUM('active', 'expired', 'cancelled') DEFAULT 'active',
+  FOREIGN KEY (user_id) REFERENCES user(id),
+  FOREIGN KEY (course_id) REFERENCES course(id)
+);
+
+-- ===============================
+-- 🔟 FREE PREVIEW LOG (Optional)
+-- ===============================
+CREATE TABLE free_preview_log (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT,
+  topic_id INT,
+  viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES user(id),
+  FOREIGN KEY (topic_id) REFERENCES topic(id)
+);
+
+-- ===============================
+-- 1️⃣1️⃣ PAYMENT GATEWAY
+-- ===============================
+CREATE TABLE payment_gateway (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  gateway_name VARCHAR(100) UNIQUE,   -- e.g. PayPal, Stripe, Flutterwave
+  gateway_description TEXT,
+  api_key VARCHAR(255),
+  api_secret VARCHAR(255),
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- ===============================
+-- 1️⃣2️⃣ PAYMENT TRANSACTION
+-- ===============================
+CREATE TABLE payment_transaction (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  course_id INT NOT NULL,
+  subscription_id INT NULL,
+  gateway_id INT NOT NULL,
+  transaction_reference VARCHAR(100) UNIQUE,
+  amount DECIMAL(10,2) NOT NULL,
+  currency VARCHAR(10) DEFAULT 'USD',
+  payment_status ENUM('pending', 'success', 'failed') DEFAULT 'pending',
+  payment_method VARCHAR(50),        -- card, mobile money, etc.
+  response_data JSON,                -- full gateway response
+  paid_at TIMESTAMP NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES user(id),
+  FOREIGN KEY (course_id) REFERENCES course(id),
+  FOREIGN KEY (subscription_id) REFERENCES user_course_subscription(id),
+  FOREIGN KEY (gateway_id) REFERENCES payment_gateway(id)
+
+  --Updated ===========================================================================================
+  -- ===============================
+-- 1. COURSE TABLE
+-- ===============================
+CREATE TABLE course (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    course_title VARCHAR(255) NOT NULL,
+    course_description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+
+-- ===============================
+-- 2. TOPIC TABLE
+-- ===============================
+CREATE TABLE topic (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    course_id INT NOT NULL,
+    topic_title VARCHAR(255) NOT NULL,
+    topic_description TEXT,
+    is_free TINYINT(1) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (course_id) REFERENCES course(id) ON DELETE CASCADE
+);
+
+
+-- ===============================
+-- 3. SUBTOPIC TABLE
+-- ===============================
+CREATE TABLE subtopic (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    topic_id INT NOT NULL,
+    subtopic_title VARCHAR(255) NOT NULL,
+    subtopic_description TEXT,
+    is_free TINYINT(1) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (topic_id) REFERENCES topic(id) ON DELETE CASCADE
+);
+
+
+-- ===============================
+-- 4. TERM TABLE
+-- ===============================
+CREATE TABLE term (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    course_id INT NOT NULL,
+    term_number INT NOT NULL,
+    term_title VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (course_id) REFERENCES course(id) ON DELETE CASCADE
+);
+
+
+-- ===============================
+-- 5. TOPIC MATERIAL TABLE
+-- ===============================
+CREATE TABLE topic_material (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    topic_id INT NOT NULL,
+    subtopic_id INT DEFAULT NULL,
+    term_id INT NOT NULL,
+    material_type ENUM('note', 'video') NOT NULL,
+    title VARCHAR(255),
+    file_url TEXT,
+    video_url TEXT,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (topic_id) REFERENCES topic(id) ON DELETE CASCADE,
+    FOREIGN KEY (subtopic_id) REFERENCES subtopic(id) ON DELETE SET NULL,
+    FOREIGN KEY (term_id) REFERENCES term(id) ON DELETE CASCADE
+);
+
+
+-- ===============================
+-- 6. TERM TEST TABLE
+-- ===============================
+CREATE TABLE term_test (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    term_id INT NOT NULL,
+    test_type ENUM('test1', 'test2', 'sessional') NOT NULL,
+    file_url TEXT NOT NULL,
+    title VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (term_id) REFERENCES term(id) ON DELETE CASCADE
+);
+
+
+-- ===============================
+-- 7. TERM TUTORIAL SHEETS TABLE
+-- ===============================
+CREATE TABLE term_tutorial_sheet (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    term_id INT NOT NULL,
+    title VARCHAR(255),
+    file_url TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (term_id) REFERENCES term(id) ON DELETE CASCADE
+);
+-- ===============================
+);
