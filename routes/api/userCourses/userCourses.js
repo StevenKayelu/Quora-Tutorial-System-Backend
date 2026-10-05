@@ -33,6 +33,12 @@ router.get(
   (req, res) => userCourseController.getCourseIds(req, res)
 );
 
+router.get(
+  "/membership-card",
+  verifyTokenMiddleware,
+  (req, res) => userCourseController.getMembershipCard(req, res)
+);
+
 // 404 handler
 router.get("*", (req, res) =>
   res.status(404).json({ success: false, message: "Page not found", error: { code: 404 } })
