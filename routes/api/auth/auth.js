@@ -2,6 +2,13 @@ import express from "express";
 import AuthController from "../../../controllers/api/AuthController.js";
 import { verifyTokenMiddleware } from "../../../middlewares/tokenMiddleware.js";
 import { uploadProfileImage } from "../../../middlewares/multerConfig.js";
+import {
+  loginLimiter,
+  registerLimiter,
+  forgotPasswordLimiter,
+  resendVerificationLimiter,
+  resetPasswordLimiter,
+} from "../../../middlewares/rateLimitMiddleware.js";
 
 const router = express.Router();
 const authController = new AuthController();
@@ -26,10 +33,18 @@ router.get("/preview/:id", verifyTokenMiddleware, async (req, res) => {
 });
 
 // Auth endpoints
-router.post("/login", (req, res) => authController.login(req, res));
-router.post("/register", (req, res) => authController.register(req, res));
+router.post("/login", loginLimiter, (req, res) => authController.login(req, res));
+router.post("/register", registerLimiter, (req, res) => authController.register(req, res));
 router.post("/logout", (req, res) => authController.logoutController(req, res));
 router.get("/verifyToken", (req, res) => authController.verifyTokenController?.(req, res));
+
+// Email verification & password reset
+router.get("/verify-email/:token", (req, res) => authController.verifyEmail(req, res));
+router.post("/resend-verification", resendVerificationLimiter, (req, res) =>
+  authController.resendVerification(req, res)
+);
+router.post("/forgot-password", forgotPasswordLimiter, (req, res) => authController.forgotPassword(req, res));
+router.post("/reset-password", resetPasswordLimiter, (req, res) => authController.resetPassword(req, res));
 
 // Refresh token endpoint
 router.get("/refresh", (req, res) => authController.refresh(req, res));
