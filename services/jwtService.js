@@ -65,7 +65,9 @@ export const verifyRefreshToken = async (req) => {
         const user = await getUserByUserId(userDec);
         if (user) {
           decryptedUser = {
-            id: user.u_user_id,
+            id: user.id,
+            uUserId: user.u_user_id,
+            userId: user.u_user_id,
             firstName: user.first_name,
             lastName: user.last_name,
             email: user.u_email,
