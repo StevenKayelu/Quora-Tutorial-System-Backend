@@ -5,16 +5,59 @@ import fs from "fs";
 import {
   getUserByEmail,
   getUserByUserId,
+  getUserById,
   getAllUsers,
   updateUser,
   deleteUser,
   registerUserInDb,
   getLastUserId,
+  setEmailVerificationToken,
+  getUserByEmailVerificationToken,
+  markEmailVerified,
+  setPasswordResetToken,
+  getUserByPasswordResetToken,
+  resetPasswordWithToken,
+  getUserLoginState,
+  clearExpiredLockout,
+  recordFailedLogin,
+  resetFailedLogins,
 } from "../../models/AuthModel.js";
 import { sign, verifyRefreshToken } from "../../services/jwtService.js";
 import { cryptoAESEncryption } from "../../services/encryptionService.js";
+import { sendVerificationEmail, sendPasswordResetEmail } from "../../services/mailService.js";
 import { convertToRoleData, sendErrorResponse, sendSuccessResponse } from "../../utils/globals.js";
 import { uploadToR2 } from "../../utils/r2Upload.js";
+import { generateToken, hashToken, isWellFormedToken } from "../../utils/tokenGenerator.js";
+import { isValidPassword, PASSWORD_POLICY_MESSAGE } from "../../utils/passwordPolicy.js";
+
+const VERIFICATION_TOKEN_TTL_HOURS = 24;
+const PASSWORD_RESET_TOKEN_TTL_MINUTES = 60;
+const MAX_FAILED_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 15;
+
+// Same response whether or not the account exists, so these endpoints can't be
+// used to discover which emails are registered.
+const RESEND_VERIFICATION_MESSAGE =
+  "If an unverified account exists for that email, a new verification link has been sent.";
+const FORGOT_PASSWORD_MESSAGE =
+  "If an account exists for that email, a password reset link has been sent.";
+
+// Base URL of the frontend, used for links in emails
+const getPublicUrl = () =>
+  (process.env.VITE_PUBLIC_URL || "http://localhost:5173").replace(/\/+$/, "");
+
+// Issue a fresh verification token (stores only its hash) and email the raw token
+const issueVerificationEmail = async (userId, email, firstName) => {
+  const rawToken = generateToken();
+  const stored = await setEmailVerificationToken(userId, hashToken(rawToken), VERIFICATION_TOKEN_TTL_HOURS);
+  if (!stored) return false;
+
+  return sendVerificationEmail({
+    to: email,
+    firstName,
+    link: `${getPublicUrl()}/verify-email/${rawToken}`,
+  });
+};
 
 
 class AuthController {
@@ -28,17 +71,10 @@ async register(req, res) {
     // Validation regex
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const mobileRegex = /^[0-9]{10}$/;
-    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{7}$/;
 
     if (!emailRegex.test(email)) return sendErrorResponse(req, res, 400, "Invalid email format");
     if (!mobileRegex.test(mobile)) return sendErrorResponse(req, res, 400, "Mobile number must be exactly 10 digits");
-    if (!passwordRegex.test(password))
-      return sendErrorResponse(
-        req,
-        res,
-        400,
-        "Password must be exactly 7 characters with at least one letter and one number"
-      );
+    if (!isValidPassword(password)) return sendErrorResponse(req, res, 400, PASSWORD_POLICY_MESSAGE);
 
     // Check if email already exists
     const existingByEmail = await getUserByEmail(email.toLowerCase());
@@ -74,6 +110,11 @@ async register(req, res) {
 
     if (!user) return sendErrorResponse(req, res, 500, "Registration failed. Please try again.");
 
+    // Send email verification link (user is NOT logged in until they verify).
+    // If this fails the account still exists; they can use "resend verification".
+    const emailSent = await issueVerificationEmail(newUserId, email.toLowerCase(), firstName);
+    if (!emailSent) console.error(`register: failed to send verification email for user ${newUserId}`);
+
     // Prepare user data for response
     const userData = {
       id: newUserId,
@@ -88,7 +129,12 @@ async register(req, res) {
       status: "unsubscribed",
     };
 
-    return sendSuccessResponse(req, res, "Registration successfully.", { user: userData });
+    return sendSuccessResponse(
+      req,
+      res,
+      "Registration successful. Please check your email to verify your account before logging in.",
+      { user: userData }
+    );
   } catch (error) {
     console.error("register error:", error);
     return sendErrorResponse(req, res, 500, "Internal server error during registration.");
@@ -110,12 +156,64 @@ async register(req, res) {
 
       if (!user) return sendErrorResponse(req, res, 404, "No account found with that User ID or email.");
 
+      // Lockout check happens before the password is even compared
+      const loginState = await getUserLoginState(user.u_user_id);
+      if (!loginState) return sendErrorResponse(req, res, 500, "Login failed.");
+
+      if (loginState.lockout_seconds_remaining > 0) {
+        const minutes = Math.ceil(loginState.lockout_seconds_remaining / 60);
+        return sendErrorResponse(
+          req,
+          res,
+          423,
+          `Account temporarily locked due to too many failed login attempts. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`
+        );
+      }
+      if (loginState.lockout_expired) await clearExpiredLockout(user.u_user_id);
+
       const hash = user.u_password.replace(/^\$2y(.+)$/i, "$2b$1");
       const passwordValid = await bcrypt.compare(password, hash);
-      if (!passwordValid) return sendErrorResponse(req, res, 401, "Incorrect password.");
+      if (!passwordValid) {
+        const failed = await recordFailedLogin(user.u_user_id, MAX_FAILED_LOGIN_ATTEMPTS, LOCKOUT_MINUTES);
+        if (failed?.lockout_seconds_remaining > 0) {
+          return sendErrorResponse(
+            req,
+            res,
+            423,
+            `Incorrect password. Too many failed attempts - your account has been locked for ${LOCKOUT_MINUTES} minutes.`
+          );
+        }
+        if (failed) {
+          const attemptsLeft = Math.max(MAX_FAILED_LOGIN_ATTEMPTS - failed.failed_login_attempts, 0);
+          return sendErrorResponse(
+            req,
+            res,
+            401,
+            `Incorrect password. ${attemptsLeft} attempt${attemptsLeft === 1 ? "" : "s"} remaining before your account is temporarily locked.`
+          );
+        }
+        return sendErrorResponse(req, res, 401, "Incorrect password.");
+      }
+
+      // Correct password: reset the failed-attempt counter
+      if (loginState.failed_login_attempts > 0) {
+        await resetFailedLogins(user.u_user_id);
+      }
+
+      // Unverified accounts can't log in, even with the right password
+      if (!loginState.email_verified_at) {
+        return sendErrorResponse(
+          req,
+          res,
+          403,
+          "Please verify your email address before logging in. Check your inbox for the verification link, or request a new one."
+        );
+      }
 
       const userData = {
-        id: user.u_user_id,
+        id: user.id,
+        uUserId: user.u_user_id,
+        userId: user.u_user_id,
         firstName: user.first_name,
         lastName: user.last_name,
         email: user.u_email,
@@ -211,6 +309,110 @@ async verifyOldPassword(req, res) {
   }
 }
 
+  // ===== VERIFY EMAIL =====
+  async verifyEmail(req, res) {
+    try {
+      const { token } = req.params;
+      const invalidMessage = "This verification link is invalid or has already been used.";
+      if (!isWellFormedToken(token)) return sendErrorResponse(req, res, 400, invalidMessage);
+
+      const tokenHash = hashToken(token);
+      const record = await getUserByEmailVerificationToken(tokenHash);
+      if (!record) return sendErrorResponse(req, res, 400, invalidMessage);
+      if (Number(record.token_expired))
+        return sendErrorResponse(req, res, 400, "This verification link has expired. Please request a new one.");
+
+      const verified = await markEmailVerified(tokenHash);
+      if (!verified) return sendErrorResponse(req, res, 400, invalidMessage);
+
+      return sendSuccessResponse(req, res, "Email verified successfully. You can now log in.");
+    } catch (error) {
+      console.error("verifyEmail error:", error);
+      return sendErrorResponse(req, res, 500, "Error verifying email.");
+    }
+  }
+
+  // ===== RESEND VERIFICATION EMAIL =====
+  async resendVerification(req, res) {
+    try {
+      const { email } = req.body || {};
+      if (!email || typeof email !== "string") return sendErrorResponse(req, res, 400, "Email is required");
+
+      const user = await getUserByEmail(email.trim().toLowerCase());
+      if (user) {
+        const state = await getUserLoginState(user.u_user_id);
+        if (state && !state.email_verified_at) {
+          const sent = await issueVerificationEmail(user.u_user_id, user.u_email, user.first_name);
+          if (!sent) console.error(`resendVerification: failed to send email for user ${user.u_user_id}`);
+        }
+      }
+
+      return sendSuccessResponse(req, res, RESEND_VERIFICATION_MESSAGE);
+    } catch (error) {
+      console.error("resendVerification error:", error);
+      return sendErrorResponse(req, res, 500, "Error resending verification email.");
+    }
+  }
+
+  // ===== FORGOT PASSWORD =====
+  async forgotPassword(req, res) {
+    try {
+      const { email } = req.body || {};
+      if (!email || typeof email !== "string") return sendErrorResponse(req, res, 400, "Email is required");
+
+      const user = await getUserByEmail(email.trim().toLowerCase());
+      if (user) {
+        const rawToken = generateToken();
+        const stored = await setPasswordResetToken(
+          user.u_user_id,
+          hashToken(rawToken),
+          PASSWORD_RESET_TOKEN_TTL_MINUTES
+        );
+        const sent =
+          stored &&
+          (await sendPasswordResetEmail({
+            to: user.u_email,
+            firstName: user.first_name,
+            link: `${getPublicUrl()}/reset-password/${rawToken}`,
+          }));
+        if (!sent) console.error(`forgotPassword: failed to issue reset email for user ${user.u_user_id}`);
+      }
+
+      return sendSuccessResponse(req, res, FORGOT_PASSWORD_MESSAGE);
+    } catch (error) {
+      console.error("forgotPassword error:", error);
+      return sendErrorResponse(req, res, 500, "Error processing password reset request.");
+    }
+  }
+
+  // ===== RESET PASSWORD =====
+  async resetPassword(req, res) {
+    try {
+      const { token, newPassword } = req.body || {};
+      if (!token || !newPassword)
+        return sendErrorResponse(req, res, 400, "Reset token and new password are required");
+      if (!isValidPassword(newPassword)) return sendErrorResponse(req, res, 400, PASSWORD_POLICY_MESSAGE);
+
+      const invalidMessage = "This password reset link is invalid or has already been used.";
+      if (!isWellFormedToken(token)) return sendErrorResponse(req, res, 400, invalidMessage);
+
+      const tokenHash = hashToken(token);
+      const record = await getUserByPasswordResetToken(tokenHash);
+      if (!record) return sendErrorResponse(req, res, 400, invalidMessage);
+      if (Number(record.token_expired))
+        return sendErrorResponse(req, res, 400, "This password reset link has expired. Please request a new one.");
+
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      const updated = await resetPasswordWithToken(tokenHash, hashedPassword);
+      if (!updated) return sendErrorResponse(req, res, 400, invalidMessage);
+
+      return sendSuccessResponse(req, res, "Your password has been reset. You can now log in with your new password.");
+    } catch (error) {
+      console.error("resetPassword error:", error);
+      return sendErrorResponse(req, res, 500, "Error resetting password.");
+    }
+  }
+
 
 
   // ===== LOGOUT =====
@@ -230,11 +432,13 @@ async verifyOldPassword(req, res) {
       const userId = req.user?.id;
       if (!userId) return sendErrorResponse(req, res, 401, "Unauthorized");
 
-      const user = await getUserByUserId(userId);
+      const user = await getUserById(userId);
       if (!user) return sendErrorResponse(req, res, 404, "User not found");
 
       const userData = {
-        id: user.u_user_id,
+        id: user.id,
+        uUserId: user.u_user_id,
+        userId: user.u_user_id,
         firstName: user.first_name,
         lastName: user.last_name,
         email: user.u_email,
@@ -283,7 +487,9 @@ async verifyOldPassword(req, res) {
       if (!user) return sendErrorResponse(req, res, 404, "User not found");
 
       const userData = {
-        id: user.u_user_id,
+        id: user.id,
+        uUserId: user.u_user_id,
+        userId: user.u_user_id,
         firstName: user.first_name,
         lastName: user.last_name,
         email: user.u_email,
