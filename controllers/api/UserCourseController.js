@@ -247,7 +247,7 @@ export default class UserCourseController {
       } else {
         return res.status(404).end();
       }
-      await sendStoredImage(res, url);
+      await sendStoredImage(res, url, kind === "photo" ? `photo of user ${req.user?.id}` : "logo");
     } catch (err) {
       console.error("getMembershipCardImage:", err);
       if (!res.headersSent) res.status(404).end();
