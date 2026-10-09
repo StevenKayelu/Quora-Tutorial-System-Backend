@@ -1,6 +1,9 @@
 import db from "../../config/db.js";
 import UserCourseModel from "../../models/UserCourseModel.js";
 import UserSubscriptionModel from "../../models/UserSubscriptionModel.js";
+import { getUserAcademic } from "../../models/AcademicModel.js";
+import { getSystemInfo } from "../../models/SystemInfoModel.js";
+import { sendStoredImage } from "../../utils/storedImage.js";
 
 export default class UserCourseController {
   constructor() {
@@ -200,13 +203,16 @@ export default class UserCourseController {
       const studentId = user.u_user_id || String(user.id);
       const programme = [...new Set((courses || []).map(course => course.school).filter(Boolean))].join(", ") || "General Studies";
       const cardNumber = user.u_user_id || `STU-${String(user.id).padStart(6, "0")}`;
+      const academic = await getUserAcademic(user.id);
 
       const payload = {
         studentName,
         studentId,
         studentIdDisplay: studentId,
         programme,
-        yearOfStudy: currentTerm ? `Year ${currentTerm.term_number}` : "Current Term",
+        // The student's chosen year of study (falls back to the old term-based label)
+        yearOfStudy: academic?.study_year_name || (currentTerm ? `Year ${currentTerm.term_number}` : "Current Term"),
+        school: academic?.school_name || null,
         // mysql2 returns DATE columns as Date objects, not strings
         academicYear: currentTerm ? `${new Date(currentTerm.start_date).getFullYear()} / ${new Date(currentTerm.end_date).getFullYear()}` : "N/A",
         term: currentTerm ? `Term ${currentTerm.term_number}` : "Membership",
@@ -223,6 +229,28 @@ export default class UserCourseController {
     } catch (err) {
       console.error("getMembershipCard:", err);
       return res.status(500).json({ success: false, message: "Failed to load membership card." });
+    }
+  }
+
+  // -------------------- MEMBERSHIP CARD IMAGES --------------------
+  // The logged-in student's own photo, or the system logo, served from our API
+  // so the card can be drawn on a canvas and saved as an image.
+  async getMembershipCardImage(req, res) {
+    try {
+      const { kind } = req.params;
+      let url = null;
+      if (kind === "photo") {
+        const [[user]] = await db.query("SELECT u_image FROM user WHERE id = ? LIMIT 1", [req.user?.id]);
+        url = user?.u_image || null;
+      } else if (kind === "logo") {
+        url = (await getSystemInfo())?.logo || null;
+      } else {
+        return res.status(404).end();
+      }
+      await sendStoredImage(res, url);
+    } catch (err) {
+      console.error("getMembershipCardImage:", err);
+      if (!res.headersSent) res.status(404).end();
     }
   }
 }

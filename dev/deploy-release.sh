@@ -71,13 +71,13 @@ for f in $(git status --porcelain --untracked-files=no | awk '{print $2}'); do
   esac
 done
 git pull --ff-only origin main || fail "git pull failed"
-for m in 003_school_and_study_year 004_notifications 005_course_school_sharing 006_align_live_schema; do
+for m in 003_school_and_study_year 004_notifications 005_course_school_sharing 006_align_live_schema 007_student_rules; do
   [ -f "migrations/$m.sql" ] || fail "migrations/$m.sql missing after pull"
 done
 echo "Code updated: $PREV_COMMIT -> $(git rev-parse --short HEAD)"
 
 # ---------------------------------------------------------------------
-step "5/8 Running database migrations"
+step "5/8 Running database migrations (each one is safe to re-run)"
 run() {
   echo "-- $1"
   mysql --defaults-extra-file="$CNF" --table "$DB_NAME" < "migrations/$1.sql" \
@@ -89,6 +89,7 @@ if [ "$HAS_SCHOOL" = "0" ]; then run 003_school_and_study_year; else echo "-- 00
 run 004_notifications
 run 005_course_school_sharing
 run 006_align_live_schema
+run 007_student_rules
 
 # ---------------------------------------------------------------------
 step "6/8 Verifying the database"
@@ -96,7 +97,7 @@ NOT_INT=$(q "SELECT COUNT(*) FROM information_schema.COLUMNS
              WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'user_id' AND DATA_TYPE <> 'int'
                AND TABLE_NAME IN ('user_course_subscription', 'payment_transaction')")
 [ "$NOT_INT" = "0" ] || fail "user_id columns were not converted"
-for t in study_year notification course_school; do
+for t in study_year notification course_school student_rules; do
   [ "$(q "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$t'")" = "1" ] \
     || fail "table $t is missing"
 done

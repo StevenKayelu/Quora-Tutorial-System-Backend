@@ -39,6 +39,13 @@ router.get(
   (req, res) => userCourseController.getMembershipCard(req, res)
 );
 
+// "photo" (the student's own) or "logo"
+router.get(
+  "/membership-card/image/:kind",
+  verifyTokenMiddleware,
+  (req, res) => userCourseController.getMembershipCardImage(req, res)
+);
+
 // 404 handler
 router.get("*", (req, res) =>
   res.status(404).json({ success: false, message: "Page not found", error: { code: 404 } })

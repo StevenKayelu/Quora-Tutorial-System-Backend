@@ -18,6 +18,7 @@ import systemInfoRoutes from "./system/systemInfo.js";
 import apiAdminSubscriptions from "./Subscriptions/adminSubscriptions.js";
 import apiAcademicRoutes from "./academic/academic.js";
 import apiNotificationRoutes from "./notifications/notifications.js";
+import apiRulesRoutes from "./rules/rules.js";
 const router = express.Router();
 
 router.use(express.json());
@@ -42,6 +43,7 @@ router.use("/system-info", systemInfoRoutes);
 router.use("/subscriptions", apiAdminSubscriptions);
 router.use("/academic", apiAcademicRoutes);
 router.use("/notifications", apiNotificationRoutes);
+router.use("/rules", apiRulesRoutes);
 
 
 // CATCH-ALL HANDLER
