@@ -17,6 +17,10 @@ router.put("/me", verifyTokenMiddleware, (req, res) => controller.updateMine(req
 
 // Admin: manage the study year list
 router.get("/years", verifyTokenMiddleware, isAdmin, (req, res) => controller.listYears(req, res));
+
+// Admin: change any user's school and year (students can't change their school)
+router.get("/users/:userId", verifyTokenMiddleware, isAdmin, (req, res) => controller.getForUser(req, res));
+router.put("/users/:userId", verifyTokenMiddleware, isAdmin, (req, res) => controller.updateForUser(req, res));
 router.post("/years", verifyTokenMiddleware, isAdmin, (req, res) => controller.createYear(req, res));
 router.put("/years/reorder", verifyTokenMiddleware, isAdmin, (req, res) => controller.reorderYears(req, res));
 router.put("/years/:id", verifyTokenMiddleware, isAdmin, (req, res) => controller.updateYear(req, res));

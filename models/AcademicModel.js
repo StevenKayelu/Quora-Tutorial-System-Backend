@@ -44,6 +44,19 @@ export const getUserAcademic = async (userId) => {
   return rows[0] || null;
 };
 
+export const getUserAcademicByUserId = async (uUserId) => {
+  const [rows] = await pool.query(
+    `SELECT u.school_id, s.school_name, u.study_year_id, sy.name AS study_year_name
+     FROM user u
+     LEFT JOIN school s ON s.id = u.school_id
+     LEFT JOIN study_year sy ON sy.id = u.study_year_id
+     WHERE u.u_user_id = ?
+     LIMIT 1`,
+    [uUserId]
+  );
+  return rows[0] || null;
+};
+
 // Registration identifies the new user by u_user_id
 export const setUserAcademicByUserId = async (uUserId, schoolId, studyYearId) => {
   const [result] = await pool.query(

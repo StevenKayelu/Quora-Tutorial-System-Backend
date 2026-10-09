@@ -11,6 +11,8 @@ import {
   reorderStudyYears,
   countUsersInStudyYear,
   deleteStudyYear,
+  getUserAcademicByUserId,
+  setUserAcademicByUserId,
 } from "../../models/AcademicModel.js";
 
 const isDuplicate = (error) => error?.code === "ER_DUP_ENTRY";
@@ -34,6 +36,37 @@ export default class AcademicController {
   }
 
   // ===== LOGGED-IN USER: own school + year =====
+  // ADMIN: a user's school and year (users are identified by u_user_id)
+  async getForUser(req, res) {
+    try {
+      const data = await getUserAcademicByUserId(req.params.userId);
+      if (!data) return res.status(404).json({ success: false, message: "User not found" });
+      res.json({ success: true, data: { schoolId: data.school_id, studyYearId: data.study_year_id } });
+    } catch (error) {
+      console.error("getForUser error:", error);
+      res.status(500).json({ success: false, message: "Failed to load the user's school and year" });
+    }
+  }
+
+  async updateForUser(req, res) {
+    try {
+      const schoolId = Number(req.body?.schoolId);
+      const studyYearId = Number(req.body?.studyYearId);
+      if (!schoolId || !(await schoolExists(schoolId)))
+        return res.status(400).json({ success: false, message: "Please select a valid school" });
+      if (!studyYearId || !(await studyYearExists(studyYearId)))
+        return res.status(400).json({ success: false, message: "Please select a valid year of study" });
+
+      if (!(await getUserAcademicByUserId(req.params.userId)))
+        return res.status(404).json({ success: false, message: "User not found" });
+      await setUserAcademicByUserId(req.params.userId, schoolId, studyYearId);
+      res.json({ success: true, message: "School and year updated" });
+    } catch (error) {
+      console.error("updateForUser error:", error);
+      res.status(500).json({ success: false, message: "Failed to update the user's school and year" });
+    }
+  }
+
   async getMine(req, res) {
     try {
       const data = await getUserAcademic(req.user.id);
@@ -64,6 +97,15 @@ export default class AcademicController {
         return res.status(400).json({ success: false, message: "Please select a valid school" });
       if (!studyYearId || !(await studyYearExists(studyYearId)))
         return res.status(400).json({ success: false, message: "Please select a valid year of study" });
+
+      // A student picks their school once; after that only an admin can change it
+      const current = await getUserAcademic(req.user.id);
+      if (current?.school_id && Number(current.school_id) !== schoolId) {
+        return res.status(403).json({
+          success: false,
+          message: "Your school can only be changed by an administrator",
+        });
+      }
 
       await setUserAcademic(req.user.id, schoolId, studyYearId);
       res.json({ success: true, message: "School and year saved" });

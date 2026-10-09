@@ -4,6 +4,7 @@ import { uploadToR2, getKeyFromUrl, deleteR2FilesQuietly } from "../../utils/r2U
 import { getSignedUrlFromR2 } from "../../utils/r2SignedUrl.js";
 import { canAccessCourse, getTopicMaterialAccessInfo, redactFileUrls } from "../../utils/courseAccess.js";
 import { notifyNewTopicMaterial } from "../../services/notificationService.js";
+import { getUserAcademic } from "../../models/AcademicModel.js";
 
 // Free-preview materials are open to any logged-in user; the rest need a subscription
 const canAccessMaterial = async (user, material) =>
@@ -178,7 +179,14 @@ async getAll(req, res) {
 // Free-preview materials across all schools (any logged-in user)
 async getFree(req, res) {
   try {
-    const materials = await TopicMaterialModel.getFreeWithContext();
+    let materials = await TopicMaterialModel.getFreeWithContext();
+    // Students only see free lessons offered at their own school; admins see all
+    if (req.user?.role !== "admin") {
+      const academic = await getUserAcademic(req.user?.id);
+      materials = academic?.school_id
+        ? materials.filter((m) => Number(m.school_id) === Number(academic.school_id))
+        : [];
+    }
     res.json({ success: true, data: redactFileUrls(req.user, materials) });
   } catch (error) {
     console.error("Get free materials error:", error);
