@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import { deleteNotificationsForItems } from "./NotificationModel.js";
 
 export default class TermTutorialSheetModel {
   static async getAll() {
@@ -50,5 +51,6 @@ export default class TermTutorialSheetModel {
 
   static async delete(id) {
     await pool.query("DELETE FROM term_tutorial_sheet WHERE id=?", [id]);
+    await deleteNotificationsForItems(["tutorial"], id);
   }
 }

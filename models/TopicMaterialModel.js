@@ -1,5 +1,9 @@
 import pool from "../config/db.js";
 import { deleteR2FilesQuietly } from "../utils/r2Upload.js";
+import {
+  deleteNotificationsForItems,
+  MATERIAL_NOTIFICATION_TYPES,
+} from "./NotificationModel.js";
 
 export default class TopicMaterialModel {
   static async getAll() {
@@ -108,6 +112,7 @@ export default class TopicMaterialModel {
 
   static async delete(id) {
     await pool.query("DELETE FROM topic_material WHERE id = ?", [id]);
+    await deleteNotificationsForItems(MATERIAL_NOTIFICATION_TYPES, id);
   }
 
 static async getBySubtopicIds(subtopicIds, type = null) {
@@ -149,15 +154,16 @@ static async getBySubtopicIds(subtopicIds, type = null) {
     return rows;
   }
   static async deleteBySubtopic(subtopicId) {
-  const [files] = await pool.query(
-    "SELECT file_url FROM topic_material WHERE subtopic_id = ? AND file_url IS NOT NULL",
+  const [materials] = await pool.query(
+    "SELECT id, file_url FROM topic_material WHERE subtopic_id = ?",
     [subtopicId]
   );
   await pool.query(
     "DELETE FROM topic_material WHERE subtopic_id = ?",
     [subtopicId]
   );
-  await deleteR2FilesQuietly(files.map((f) => f.file_url));
+  await deleteNotificationsForItems(MATERIAL_NOTIFICATION_TYPES, materials.map((m) => m.id));
+  await deleteR2FilesQuietly(materials.map((m) => m.file_url).filter(Boolean));
 }
 
 }

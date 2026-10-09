@@ -3,6 +3,7 @@ import TermModel from "./TermModel.js";
 import CourseTermModel from "./CourseTermModel.js";
 import TopicModel from "./TopicModel.js";
 import { deleteR2FilesQuietly } from "../utils/r2Upload.js";
+import { deleteNotificationsForCourse } from "./NotificationModel.js";
 
 // "3,7" (GROUP_CONCAT) → [3, 7]
 const withSharedSchools = (row) => ({
@@ -157,6 +158,9 @@ export default class CourseModel {
 
   // Remove course-term relations
   await CourseTermModel.deleteByCourse(id);
+
+  // Notifications for anything in this course
+  await deleteNotificationsForCourse(id);
 
   // Delete the course
   await pool.query("DELETE FROM courses WHERE id = ?", [id]);

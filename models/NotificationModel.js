@@ -40,3 +40,22 @@ export const markAllRead = async (userId) => {
   );
   return result.affectedRows;
 };
+
+// Notifications point at an item by (type, item_id). Remove them when the
+// item is deleted, so a student never opens a notification for missing content.
+export const MATERIAL_NOTIFICATION_TYPES = ["video", "note"];
+
+export const deleteNotificationsForItems = async (types, itemIds) => {
+  const ids = (Array.isArray(itemIds) ? itemIds : [itemIds]).filter(Boolean);
+  if (!ids.length) return 0;
+  const [result] = await pool.query(
+    "DELETE FROM notification WHERE type IN (?) AND item_id IN (?)",
+    [types, ids]
+  );
+  return result.affectedRows;
+};
+
+export const deleteNotificationsForCourse = async (courseId) => {
+  const [result] = await pool.query("DELETE FROM notification WHERE course_id = ?", [courseId]);
+  return result.affectedRows;
+};

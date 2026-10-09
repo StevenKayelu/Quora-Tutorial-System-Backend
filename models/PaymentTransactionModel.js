@@ -5,7 +5,7 @@ export default class PaymentTransactionModel {
 
   static async getAll() {
     const [rows] = await pool.query(`
-      SELECT pt.*, u.first_name AS user_name
+      SELECT pt.*, u.first_name AS user_name, u.last_name AS user_last_name, u.u_user_id
       FROM payment_transaction pt
       LEFT JOIN user u ON u.id = pt.user_id
       ORDER BY pt.created_at DESC
