@@ -112,11 +112,12 @@ static async updateUserStatus(userId, connection = pool) {
       AND expires_at >= CURDATE()
   `, [userId]);
 
+  // userId is user.id (INT primary key)
   await connection.query(`
     UPDATE user
     SET u_status = ?
-    WHERE u_user_id = ?
-  `, [count > 0 ? 'subscribed' : 'inactive', userId]);
+    WHERE id = ?
+  `, [count > 0 ? 'subscribed' : 'unsubscribed', userId]);
 }
 
   /**
@@ -191,12 +192,13 @@ static async finalizeTransaction(
     // 3️⃣ Activate subscriptions if payment success
     if (payment_status === "success") {
 
-      // 🔹 Get ACTIVE TERM
+      // 🔹 Get ACTIVE TERM; between terms, use the next upcoming one so a
+      //    completed payment is never stuck at "pending" with no subscription
       const [termRows] = await conn.query(`
         SELECT id, end_date
         FROM term
-        WHERE start_date <= CURDATE()
-          AND end_date >= CURDATE()
+        WHERE end_date >= CURDATE()
+        ORDER BY (start_date <= CURDATE()) DESC, start_date ASC
         LIMIT 1
       `);
 
@@ -259,8 +261,8 @@ static async finalizeTransaction(
       await conn.query(`
         UPDATE user
         SET u_status=?
-        WHERE u_user_id=?
-      `, [activeCount > 0 ? "subscribed" : "inactive", user_id]);
+        WHERE id=?
+      `, [activeCount > 0 ? "subscribed" : "unsubscribed", user_id]);
     }
 
     await conn.commit();
@@ -282,7 +284,7 @@ static async finalizeTransaction(
         u.first_name,
         u.last_name
       FROM payment_transaction pt
-      JOIN user u ON pt.user_id = u.u_user_id
+      JOIN user u ON pt.user_id = u.id
       ORDER BY pt.created_at DESC
     `);
 

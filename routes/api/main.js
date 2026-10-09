@@ -6,7 +6,6 @@ import apiSchoolRoutes from "./school/school.js";
 import apiCourseRoutes from "./course/course.js";
 import apiTopicRoutes from "./topic/topic.js";
 import apiSubtopicRoutes from "./subtopic/subtopic.js";
-import apiSubscriptionRoutes from "./subscription/subscription.js";
 import apiPaymentRoutes from "./payments/payments.js";
 import apiTermRoutes from "./term/term.js";
 import apiUserCoursesRoutes from "./userCourses/userCourses.js";
@@ -17,6 +16,8 @@ import apiTermTutorialRoutes from "./TermTutorialSheet/TermTutorialSheetRoutes.j
 import apiContactRoutes from "./contact/ContactInfoRoutes.js";
 import systemInfoRoutes from "./system/systemInfo.js";
 import apiAdminSubscriptions from "./Subscriptions/adminSubscriptions.js";
+import apiAcademicRoutes from "./academic/academic.js";
+import apiNotificationRoutes from "./notifications/notifications.js";
 const router = express.Router();
 
 router.use(express.json());
@@ -39,6 +40,8 @@ router.use("/term-tutorial-sheets", apiTermTutorialRoutes);
 router.use("/contact", apiContactRoutes);
 router.use("/system-info", systemInfoRoutes);
 router.use("/subscriptions", apiAdminSubscriptions);
+router.use("/academic", apiAcademicRoutes);
+router.use("/notifications", apiNotificationRoutes);
 
 
 // CATCH-ALL HANDLER

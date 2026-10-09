@@ -1,5 +1,6 @@
 import pool from "../config/db.js";
 import SubtopicModel from "./SubtopicModel.js";
+import { deleteR2FilesQuietly } from "../utils/r2Upload.js";
 
 export default class TopicModel {
   static async getAll() {
@@ -58,6 +59,14 @@ export default class TopicModel {
   for (const subtopic of subtopics) {
     await SubtopicModel.delete(subtopic.id);
   }
+
+  // Materials attached directly to the topic (no subtopic)
+  const [files] = await pool.query(
+    "SELECT file_url FROM topic_material WHERE topic_id = ? AND subtopic_id IS NULL AND file_url IS NOT NULL",
+    [id]
+  );
+  await pool.query("DELETE FROM topic_material WHERE topic_id = ? AND subtopic_id IS NULL", [id]);
+  await deleteR2FilesQuietly(files.map((f) => f.file_url));
 
   // Delete the topic itself
   await pool.query("DELETE FROM topic WHERE id = ?", [id]);

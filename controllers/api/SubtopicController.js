@@ -1,5 +1,4 @@
 import SubtopicModel from "../../models/SubtopicModel.js";
-import TopicMaterialModel from "../../models/TopicMaterialModel.js";
 export default class SubtopicController {
   async getAll(req, res) {
     try {
@@ -52,10 +51,7 @@ export default class SubtopicController {
      if (req.user.role !== "admin") return res.status(403).json({ success: false, message: "Access denied" });
     const subtopicId = req.params.id;
 
-    // 1. Delete materials first
-    await TopicMaterialModel.deleteBySubtopic(subtopicId);
-
-    // 2. Delete subtopic
+    // Removes the subtopic's materials (and their stored files) too
     await SubtopicModel.delete(subtopicId);
 
     res.json({ success: true, message: "Subtopic deleted successfully" });

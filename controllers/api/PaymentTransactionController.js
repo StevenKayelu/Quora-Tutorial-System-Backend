@@ -49,15 +49,15 @@ static async delete(req, res) {
 
     const { id } = req.params;
 
-    const result = await PaymentTransactionModel.deleteById(id);
+    const affectedRows = await PaymentTransactionModel.deleteById(id);
 
-    if (!result.success) {
-      return res.status(404).json(result);
+    if (!affectedRows) {
+      return res.status(404).json({ success: false, message: "Transaction not found" });
     }
 
     res.json({
       success: true,
-      message: result.message
+      message: "Transaction deleted"
     });
 
   } catch (err) {

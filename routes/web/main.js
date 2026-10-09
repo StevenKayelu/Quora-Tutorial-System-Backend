@@ -8,7 +8,7 @@ const router = express.Router();
 router.get("/", webController.index);
 
 router.get("*", function (req, res) {
-  res.send("404 not found");
+  res.status(404).send("404 not found");
 });
 
 export default router;

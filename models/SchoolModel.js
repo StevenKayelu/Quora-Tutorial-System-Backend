@@ -1,4 +1,5 @@
 import pool from "../config/db.js";
+import CourseModel from "./CourseModel.js";
 
 export default class SchoolModel {
   static async getAll() {
@@ -27,15 +28,38 @@ static async create({ school_name, school_description }) {
   }
 
  static async delete(id) {
-  // Get all courses under the school
-  const [courses] = await pool.query("SELECT id FROM courses WHERE school_id = ?", [id]);
+  // Courses whose main school this is. Shared ones move to another of their
+  // schools (lowest id) instead of being deleted.
+  const [mainCourses] = await pool.query(
+    `SELECT c.id,
+            (SELECT MIN(cs.school_id) FROM course_school cs
+             WHERE cs.course_id = c.id AND cs.school_id <> ?) AS next_school_id
+     FROM courses c WHERE c.school_id = ?`,
+    [id, id]
+  );
+  const courses = mainCourses.filter((c) => !c.next_school_id);
+  const movedCourses = mainCourses.filter((c) => c.next_school_id);
+
+  // Refuse up front if any course is in use, rather than failing halfway through
+  await CourseModel.assertDeletable(courses.map((c) => c.id));
 
   // Delete each course (this will also delete topics & subtopics)
   for (const course of courses) {
     await CourseModel.delete(course.id);
   }
 
-  // Delete the school itself
+  for (const course of movedCourses) {
+    await pool.query("UPDATE courses SET school_id = ?, updated_at = NOW() WHERE id = ?", [
+      course.next_school_id,
+      course.id,
+    ]);
+    await pool.query("DELETE FROM course_school WHERE course_id = ? AND school_id = ?", [
+      course.id,
+      course.next_school_id,
+    ]);
+  }
+
+  // Delete the school itself (its shared-course links go with it)
   await pool.query("DELETE FROM school WHERE id = ?", [id]);
 }
 

@@ -49,7 +49,7 @@ app.use(
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     // 💡 ADD THESE TWO LINES BELOW
     allowedHeaders: ["Content-Type", "Authorization", "x-access-token"],
-    exposedHeaders: ["Content-Disposition"], 
+    exposedHeaders: ["Content-Disposition", "x-access-token"],
   })
 );
 
@@ -81,8 +81,8 @@ app.use(
 -------------------------------------------------- */
 async function isAuthenticated(req, res, next) {
   try {
-    const authStatus = await verifyTokenForStatic(req);
-    if (!authStatus) {
+    const authenticated = await verifyTokenForStatic(req);
+    if (!authenticated) {
       return res.status(401).json({ message: "Unauthorized" });
     }
     next();
@@ -107,12 +107,7 @@ app.use("/api/system-info", systemInfoRoutes);
 app.use("/api", apiMainRoutes);
 
 /* --------------------------------------------------
-   WEB ROUTES (SSR / landing pages)
--------------------------------------------------- */
-app.use("/", webMainRoutes);
-
-/* --------------------------------------------------
-   HEALTH CHECK
+   HEALTH CHECK (before the web catch-all, which answers every GET)
 -------------------------------------------------- */
 app.get("/health", (_req, res) => {
   res.status(200).json({
@@ -121,6 +116,11 @@ app.get("/health", (_req, res) => {
     environment: process.env.APP_MODE || "unknown",
   });
 });
+
+/* --------------------------------------------------
+   WEB ROUTES (SSR / landing pages)
+-------------------------------------------------- */
+app.use("/", webMainRoutes);
 
 /* --------------------------------------------------
    GLOBAL 404 HANDLER

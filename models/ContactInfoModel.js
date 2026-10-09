@@ -48,6 +48,24 @@ export const createContactInfo = async (data) => {
 };
 
 /**
+ * Fetch contact info by id
+ */
+export const getContactInfoById = async (id) => {
+  const [rows] = await pool.query("SELECT * FROM contact_info WHERE id = ?", [id]);
+  return rows[0] || null;
+};
+
+// Column names come from the request body, so only these may be updated
+const UPDATABLE_FIELDS = [
+  "contact_email",
+  "contact_phone",
+  "whatsapp_number",
+  "contact_video_url",
+  "contact_video_caption",
+  "social_links",
+];
+
+/**
  * Update contact info
  */
 export const updateContactInfo = async (id, data) => {
@@ -55,7 +73,7 @@ export const updateContactInfo = async (id, data) => {
   const values = [];
 
   Object.entries(data).forEach(([key, value]) => {
-    if (value !== undefined) {
+    if (UPDATABLE_FIELDS.includes(key) && value !== undefined) {
       fields.push(`${key} = ?`);
       if (key === "social_links") {
         values.push(JSON.stringify(value));

@@ -1,6 +1,8 @@
 import TermTestModel from "../../models/TermTestModel.js";
-import { uploadToR2, deleteFromR2, getKeyFromUrl } from "../../utils/r2Upload.js";
+import { notifyNewTermTest } from "../../services/notificationService.js";
+import { uploadToR2, getKeyFromUrl, deleteR2FilesQuietly } from "../../utils/r2Upload.js";
 import { getSignedUrlFromR2 } from "../../utils/r2SignedUrl.js";
+import { canAccessCourse, redactFileUrls } from "../../utils/courseAccess.js";
 
 export default class TermTestController {
 
@@ -43,6 +45,9 @@ export default class TermTestController {
 
       res.status(201).json({ success: true, id });
 
+      // After the response: tell subscribed students (never throws)
+      notifyNewTermTest(id);
+
     } catch (err) {
       console.error("Create test error:", err);
       res.status(500).json({ success: false, message: "Failed to create test" });
@@ -64,11 +69,8 @@ export default class TermTestController {
       let file_url = old.file_url;
       const test_type = req.body.test_type || old.test_type;
 
+      // Upload the replacement first; the old file is removed after the DB update
       if (req.file?.buffer) {
-        if (old.file_url) {
-          await deleteFromR2(getKeyFromUrl(old.file_url));
-        }
-
         file_url = await uploadToR2({
           file: req.file,
           folder: `tests/${test_type}`,
@@ -81,6 +83,7 @@ export default class TermTestController {
         file_url,
       });
 
+      if (file_url !== old.file_url) await deleteR2FilesQuietly([old.file_url]);
       res.json({ success: true });
 
     } catch (err) {
@@ -101,11 +104,8 @@ export default class TermTestController {
         return res.status(404).json({ success: false, message: "Test not found" });
       }
 
-      if (old.file_url) {
-        await deleteFromR2(getKeyFromUrl(old.file_url));
-      }
-
       await TermTestModel.delete(req.params.id);
+      await deleteR2FilesQuietly([old.file_url]);
       res.json({ success: true });
 
     } catch (err) {
@@ -120,6 +120,9 @@ async previewDocument(req, res) {
     const test = await TermTestModel.getById(req.params.id);
     if (!test?.file_url) {
       return res.status(404).json({ success: false, message: "File not found" });
+    }
+    if (!(await canAccessCourse(req.user, test.course_id))) {
+      return res.status(403).json({ success: false, message: "Subscribe to this course to access this file" });
     }
 
     const key = getKeyFromUrl(test.file_url);
@@ -145,6 +148,9 @@ async download(req, res) {
     if (!test?.file_url) {
       return res.status(404).json({ success: false, message: "File not found" });
     }
+    if (!(await canAccessCourse(req.user, test.course_id))) {
+      return res.status(403).json({ success: false, message: "Subscribe to this course to access this file" });
+    }
 
     const key = getKeyFromUrl(test.file_url);
     const safeTitle =
@@ -169,7 +175,7 @@ async download(req, res) {
     try {
       const { courseId, termId } = req.params;
       const tests = await TermTestModel.getByCourseAndTerm(courseId, termId);
-      res.json({ success: true, data: tests });
+      res.json({ success: true, data: redactFileUrls(req.user, tests) });
     } catch (err) {
       console.error(err);
       res.status(500).json({ success: false, message: "Failed to fetch tests" });

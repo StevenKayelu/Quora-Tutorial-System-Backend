@@ -29,12 +29,8 @@ export const verifyTokenMiddleware = async (req, res, next) => {
 };
 
 
-// helper used by static serving
+// helper used by static serving: true when the request carries a valid session
 export const verifyTokenForStatic = async (req) => {
   const isVerified = await verifyRefreshToken(req);
- if (!isVerified || isVerified.authStatus !== 1) {
-  return sendErrorResponse(req, res, 401, "Unauthenticated");
-}
-
-  return null;
+  return Boolean(isVerified && isVerified.authStatus === 1);
 };

@@ -1,5 +1,5 @@
 import express from "express";
-import FreePreviewController from "../../controllers/api/FreePreviewController.js";
+import FreePreviewController from "../../../controllers/api/FreePreviewController.js";
 import { verifyTokenMiddleware } from "../../../middlewares/tokenMiddleware.js";
 
 const router = express.Router();

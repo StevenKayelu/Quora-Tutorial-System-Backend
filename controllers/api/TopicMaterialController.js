@@ -1,6 +1,13 @@
 import TopicMaterialModel from "../../models/TopicMaterialModel.js";
-import { uploadToR2, deleteFromR2, getKeyFromUrl } from "../../utils/r2Upload.js";
+import SubtopicModel from "../../models/SubtopicModel.js";
+import { uploadToR2, getKeyFromUrl, deleteR2FilesQuietly } from "../../utils/r2Upload.js";
 import { getSignedUrlFromR2 } from "../../utils/r2SignedUrl.js";
+import { canAccessCourse, getTopicMaterialAccessInfo, redactFileUrls } from "../../utils/courseAccess.js";
+import { notifyNewTopicMaterial } from "../../services/notificationService.js";
+
+// Free-preview materials are open to any logged-in user; the rest need a subscription
+const canAccessMaterial = async (user, material) =>
+  Number(material.access_is_free) === 1 || (await canAccessCourse(user, material.access_course_id));
 
 
 export default class TopicMaterialController {
@@ -8,6 +15,11 @@ export default class TopicMaterialController {
  async create(req, res) {
   try {
     let file_url = null;
+
+    // Validate before uploading, so a bad request never leaves an orphaned file in R2
+    if (!(await SubtopicModel.getById(req.body.subtopic_id))) {
+      return res.status(400).json({ success: false, message: "Subtopic not found" });
+    }
 
     if (req.body.material_type === "note") {
       if (!req.file || !req.file.buffer) {
@@ -29,6 +41,9 @@ export default class TopicMaterialController {
     });
 
     res.status(201).json({ success: true, id });
+
+    // After the response: tell subscribed students (never throws)
+    notifyNewTopicMaterial(id);
   } catch (error) {
     console.error("Create topic material error:", error);
     res.status(500).json({
@@ -39,52 +54,65 @@ export default class TopicMaterialController {
 }
 
 async update(req, res) {
-  const old = await TopicMaterialModel.getById(req.params.id);
+  try {
+    const old = await TopicMaterialModel.getById(req.params.id);
 
-  if (!old) {
-    return res.status(404).json({
-      success: false,
-      message: "Material not found",
-    });
-  }
-
-  let file_url = old.file_url;
-
-  if (req.file) {
-    if (old.file_url) {
-      await deleteFromR2(getKeyFromUrl(old.file_url));
+    if (!old) {
+      return res.status(404).json({
+        success: false,
+        message: "Material not found",
+      });
     }
 
-    file_url = await uploadToR2({
-      file: req.file,
-      folder: "notes",
+    let file_url = old.file_url;
+
+    // Upload the replacement first; the old file is only removed once the DB points at the new one
+    if (req.file) {
+      file_url = await uploadToR2({
+        file: req.file,
+        folder: "notes",
+      });
+    }
+
+    await TopicMaterialModel.update(req.params.id, {
+      ...req.body,
+      file_url,
     });
+
+    if (req.file && old.file_url) await deleteR2FilesQuietly([old.file_url]);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Update topic material error:", error);
+    res.status(500).json({ success: false, message: "Failed to update material" });
   }
-
-  await TopicMaterialModel.update(req.params.id, {
-    ...req.body,
-    file_url,
-  });
-
-  res.json({ success: true });
 }
 
 
   async delete(req, res) {
-    const old = await TopicMaterialModel.getById(req.params.id);
-    if (old?.file_url) {
-      await deleteFromR2(getKeyFromUrl(old.file_url));
-    }
+    try {
+      const old = await TopicMaterialModel.getById(req.params.id);
+      if (!old) {
+        return res.status(404).json({ success: false, message: "Material not found" });
+      }
 
-    await TopicMaterialModel.delete(req.params.id);
-    res.json({ success: true });
+      await TopicMaterialModel.delete(req.params.id);
+      await deleteR2FilesQuietly([old.file_url]);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete topic material error:", error);
+      res.status(500).json({ success: false, message: "Failed to delete material" });
+    }
   }
 
 async previewDocument(req, res) {
   try {
-    const material = await TopicMaterialModel.getById(req.params.id);
+    const material = await getTopicMaterialAccessInfo(req.params.id);
     if (!material?.file_url) {
       return res.status(404).json({ success: false, message: "File not found" });
+    }
+    if (!(await canAccessMaterial(req.user, material))) {
+      return res.status(403).json({ success: false, message: "Subscribe to this course to access this file" });
     }
 
     const key = getKeyFromUrl(material.file_url);
@@ -107,9 +135,12 @@ async previewDocument(req, res) {
 
 async download(req, res) {
   try {
-    const material = await TopicMaterialModel.getById(req.params.id);
+    const material = await getTopicMaterialAccessInfo(req.params.id);
     if (!material?.file_url) {
       return res.status(404).json({ success: false, message: "File not found" });
+    }
+    if (!(await canAccessMaterial(req.user, material))) {
+      return res.status(403).json({ success: false, message: "Subscribe to this course to access this file" });
     }
 
     const key = getKeyFromUrl(material.file_url);
@@ -134,12 +165,26 @@ async download(req, res) {
 async getAll(req, res) {
   try {
     const materials = await TopicMaterialModel.getAll();
-    res.json({ success: true, data: materials });
+    res.json({ success: true, data: redactFileUrls(req.user, materials) });
   } catch (error) {
     console.error(error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch materials",
+    });
+  }
+}
+
+// Free-preview materials across all schools (any logged-in user)
+async getFree(req, res) {
+  try {
+    const materials = await TopicMaterialModel.getFreeWithContext();
+    res.json({ success: true, data: redactFileUrls(req.user, materials) });
+  } catch (error) {
+    console.error("Get free materials error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch free materials",
     });
   }
 }
@@ -155,7 +200,7 @@ async getById(req, res) {
       });
     }
 
-    res.json({ success: true, data: material });
+    res.json({ success: true, data: redactFileUrls(req.user, material) });
   } catch (error) {
     console.error(error);
     res.status(500).json({
@@ -182,7 +227,7 @@ async getById(req, res) {
         material_type || null
       );
 
-      res.json({ success: true, data: materials });
+      res.json({ success: true, data: redactFileUrls(req.user, materials) });
     } catch (error) {
       console.error(error);
       res.status(500).json({

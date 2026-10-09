@@ -24,8 +24,8 @@ export default class TermModel {
     return result.insertId;
   }
 
-  static async update(id, { term_number, start_date, end_date }) {
-    await pool.query(
+  static async update(id, { term_number, start_date, end_date }, connection = pool) {
+    await connection.query(
       `UPDATE term 
        SET term_number=?, start_date=?, end_date=?, updated_at=NOW()
        WHERE id=?`,

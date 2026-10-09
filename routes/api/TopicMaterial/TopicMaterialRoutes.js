@@ -1,6 +1,7 @@
 import express from "express";
 import TopicMaterialController from "../../../controllers/api/TopicMaterialController.js";
 import { verifyTokenMiddleware } from "../../../middlewares/tokenMiddleware.js";
+import { isAdmin } from "../../../middlewares/roleMiddleware.js";
 import { uploadNotes } from "../../../middlewares/multerConfig.js";
 import multer from "multer";
 
@@ -17,6 +18,7 @@ const parseFields = multer().none();
 router.post(
   "/notes",
   verifyTokenMiddleware,
+  isAdmin,
   uploadNotes.single("file"),
   (req, res) => controller.create(req, res)
 );
@@ -24,6 +26,7 @@ router.post(
 router.put(
   "/notes/:id",
   verifyTokenMiddleware,
+  isAdmin,
   uploadNotes.single("file"),
   (req, res) => controller.update(req, res)
 );
@@ -34,6 +37,7 @@ router.put(
 router.post(
   "/videos",
   verifyTokenMiddleware,
+  isAdmin,
   parseFields,
   (req, res) => controller.create(req, res)
 );
@@ -41,6 +45,7 @@ router.post(
 router.put(
   "/videos/:id",
   verifyTokenMiddleware,
+  isAdmin,
   parseFields,
   (req, res) => controller.update(req, res)
 );
@@ -52,11 +57,16 @@ router.get("/", verifyTokenMiddleware, (req, res) =>
   controller.getAll(req, res)
 );
 
+// Must stay above "/:id"
+router.get("/free", verifyTokenMiddleware, (req, res) =>
+  controller.getFree(req, res)
+);
+
 router.get("/:id", verifyTokenMiddleware, (req, res) =>
   controller.getById(req, res)
 );
 
-router.delete("/:id", verifyTokenMiddleware, (req, res) =>
+router.delete("/:id", verifyTokenMiddleware, isAdmin, (req, res) =>
   controller.delete(req, res)
 );
 
@@ -80,6 +90,7 @@ router.get(
 
 router.get(
   "/download/:id",
+  verifyTokenMiddleware,
   (req, res) => controller.download(req, res)
 );
 

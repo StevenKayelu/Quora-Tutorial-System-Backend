@@ -1,6 +1,8 @@
 import TermTutorialSheetModel from "../../models/TermTutorialSheetModel.js";
-import { uploadToR2, deleteFromR2, getKeyFromUrl } from "../../utils/r2Upload.js";
+import { notifyNewTutorialSheet } from "../../services/notificationService.js";
+import { uploadToR2, getKeyFromUrl, deleteR2FilesQuietly } from "../../utils/r2Upload.js";
 import { getSignedUrlFromR2 } from "../../utils/r2SignedUrl.js";
+import { canAccessCourse, redactFileUrls } from "../../utils/courseAccess.js";
 
 export default class TermTutorialSheetController {
 
@@ -28,6 +30,9 @@ export default class TermTutorialSheetController {
       });
 
       res.status(201).json({ success: true, id });
+
+      // After the response: tell subscribed students (never throws)
+      notifyNewTutorialSheet(id);
     } catch (err) {
       console.error("Create tutorial sheet error:", err);
       res.status(500).json({ success: false, message: "Failed to create sheet" });
@@ -46,11 +51,8 @@ export default class TermTutorialSheetController {
 
       let file_url = old.file_url;
 
+      // Upload the replacement first; the old file is removed after the DB update
       if (req.file?.buffer) {
-        if (old.file_url) {
-          await deleteFromR2(getKeyFromUrl(old.file_url));
-        }
-
         file_url = await uploadToR2({
           file: req.file,
           folder: "tutorial-sheets",
@@ -64,6 +66,7 @@ export default class TermTutorialSheetController {
         file_url,
       });
 
+      if (file_url !== old.file_url) await deleteR2FilesQuietly([old.file_url]);
       res.json({ success: true });
     } catch (err) {
       console.error("Update tutorial sheet error:", err);
@@ -81,11 +84,8 @@ export default class TermTutorialSheetController {
       const old = await TermTutorialSheetModel.getById(req.params.id);
       if (!old) return res.status(404).json({ success: false, message: "Sheet not found" });
 
-      if (old.file_url) {
-        await deleteFromR2(getKeyFromUrl(old.file_url));
-      }
-
       await TermTutorialSheetModel.delete(req.params.id);
+      await deleteR2FilesQuietly([old.file_url]);
       res.json({ success: true });
     } catch (err) {
       console.error("Delete tutorial sheet error:", err);
@@ -99,7 +99,7 @@ export default class TermTutorialSheetController {
       const sheet = await TermTutorialSheetModel.getById(req.params.id);
       if (!sheet) return res.status(404).json({ success: false, message: "Sheet not found" });
 
-      res.json({ success: true, data: sheet });
+      res.json({ success: true, data: redactFileUrls(req.user, sheet) });
     } catch (err) {
       console.error(err);
       res.status(500).json({ success: false, message: "Failed to fetch sheet" });
@@ -111,7 +111,7 @@ export default class TermTutorialSheetController {
     try {
       const { course_id, term_id } = req.params;
       const sheets = await TermTutorialSheetModel.getByCourseAndTerm(course_id, term_id);
-      res.json({ success: true, data: sheets });
+      res.json({ success: true, data: redactFileUrls(req.user, sheets) });
     } catch (err) {
       console.error(err);
       res.status(500).json({ success: false, message: "Failed to fetch sheets" });
@@ -122,7 +122,7 @@ export default class TermTutorialSheetController {
   async getAll(req, res) {
     try {
       const sheets = await TermTutorialSheetModel.getAll();
-      res.json({ success: true, data: sheets });
+      res.json({ success: true, data: redactFileUrls(req.user, sheets) });
     } catch (err) {
       console.error(err);
       res.status(500).json({ success: false, message: "Failed to fetch sheets" });
@@ -135,6 +135,9 @@ async previewDocument(req, res) {
     const sheet = await TermTutorialSheetModel.getById(req.params.id);
     if (!sheet?.file_url) {
       return res.status(404).json({ success: false, message: "File not found" });
+    }
+    if (!(await canAccessCourse(req.user, sheet.course_id))) {
+      return res.status(403).json({ success: false, message: "Subscribe to this course to access this file" });
     }
 
     const key = getKeyFromUrl(sheet.file_url);
@@ -159,6 +162,9 @@ async download(req, res) {
     const sheet = await TermTutorialSheetModel.getById(req.params.id);
     if (!sheet?.file_url) {
       return res.status(404).json({ success: false, message: "File not found" });
+    }
+    if (!(await canAccessCourse(req.user, sheet.course_id))) {
+      return res.status(403).json({ success: false, message: "Subscribe to this course to access this file" });
     }
 
     const key = getKeyFromUrl(sheet.file_url);

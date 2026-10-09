@@ -14,6 +14,7 @@ import {
   setEmailVerificationToken,
   getUserByEmailVerificationToken,
   markEmailVerified,
+  markEmailVerifiedForUser,
   setPasswordResetToken,
   getUserByPasswordResetToken,
   resetPasswordWithToken,
@@ -29,6 +30,7 @@ import { convertToRoleData, sendErrorResponse, sendSuccessResponse } from "../..
 import { uploadToR2 } from "../../utils/r2Upload.js";
 import { generateToken, hashToken, isWellFormedToken } from "../../utils/tokenGenerator.js";
 import { isValidPassword, PASSWORD_POLICY_MESSAGE } from "../../utils/passwordPolicy.js";
+import { schoolExists, studyYearExists, setUserAcademicByUserId } from "../../models/AcademicModel.js";
 
 const VERIFICATION_TOKEN_TTL_HOURS = 24;
 const PASSWORD_RESET_TOKEN_TTL_MINUTES = 60;
@@ -64,7 +66,13 @@ class AuthController {
    // ===== REGISTER =====
 async register(req, res) {
   try {
-    const { firstName, lastName, gender, email, password, mobile } = req.body || {};
+    const { firstName, lastName, gender, email, password, mobile, role, schoolId, studyYearId } = req.body || {};
+
+    // The route is public; only a logged-in admin (Admin > Users) may pick the
+    // role, and accounts an admin creates don't need to verify their email.
+    const requester = await verifyRefreshToken(req).catch(() => null);
+    const createdByAdmin =
+      requester?.authStatus === 1 && requester.data?.userData?.role === "admin";
     if (!firstName || !lastName || !gender || !email || !password || !mobile)
       return sendErrorResponse(req, res, 400, "Missing required fields");
 
@@ -75,6 +83,16 @@ async register(req, res) {
     if (!emailRegex.test(email)) return sendErrorResponse(req, res, 400, "Invalid email format");
     if (!mobileRegex.test(mobile)) return sendErrorResponse(req, res, 400, "Mobile number must be exactly 10 digits");
     if (!isValidPassword(password)) return sendErrorResponse(req, res, 400, PASSWORD_POLICY_MESSAGE);
+
+    // Students pick their school + year of study when self-registering;
+    // admin-created accounts may leave them empty (asked on first login).
+    const hasAcademic = Boolean(schoolId || studyYearId);
+    if (!createdByAdmin || hasAcademic) {
+      if (!schoolId || !(await schoolExists(Number(schoolId))))
+        return sendErrorResponse(req, res, 400, "Please select a valid school");
+      if (!studyYearId || !(await studyYearExists(Number(studyYearId))))
+        return sendErrorResponse(req, res, 400, "Please select a valid year of study");
+    }
 
     // Check if email already exists
     const existingByEmail = await getUserByEmail(email.toLowerCase());
@@ -93,7 +111,7 @@ async register(req, res) {
       user: 0,
       admin: 1,
     };
-    const roleInt = roleMapping["user"]; // Default role
+    const roleInt = createdByAdmin && Number(role) === roleMapping.admin ? roleMapping.admin : roleMapping.user;
 
     // Insert user into DB
     const user = await registerUserInDb(
@@ -110,10 +128,18 @@ async register(req, res) {
 
     if (!user) return sendErrorResponse(req, res, 500, "Registration failed. Please try again.");
 
-    // Send email verification link (user is NOT logged in until they verify).
-    // If this fails the account still exists; they can use "resend verification".
-    const emailSent = await issueVerificationEmail(newUserId, email.toLowerCase(), firstName);
-    if (!emailSent) console.error(`register: failed to send verification email for user ${newUserId}`);
+    if (!createdByAdmin || hasAcademic) {
+      await setUserAcademicByUserId(newUserId, Number(schoolId), Number(studyYearId));
+    }
+
+    if (createdByAdmin) {
+      await markEmailVerifiedForUser(newUserId);
+    } else {
+      // Send email verification link (user is NOT logged in until they verify).
+      // If this fails the account still exists; they can use "resend verification".
+      const emailSent = await issueVerificationEmail(newUserId, email.toLowerCase(), firstName);
+      if (!emailSent) console.error(`register: failed to send verification email for user ${newUserId}`);
+    }
 
     // Prepare user data for response
     const userData = {
@@ -124,15 +150,17 @@ async register(req, res) {
       email: email.toLowerCase(),
       mobile,
       image: null,
-      role: "user",          // Keep role string for frontend
-      roleValue: convertToRoleData("user", true),
+      role: convertToRoleData(roleInt), // Keep role string for frontend
+      roleValue: roleInt,
       status: "unsubscribed",
     };
 
     return sendSuccessResponse(
       req,
       res,
-      "Registration successful. Please check your email to verify your account before logging in.",
+      createdByAdmin
+        ? "User created."
+        : "Registration successful. Please check your email to verify your account before logging in.",
       { user: userData }
     );
   } catch (error) {
@@ -220,7 +248,7 @@ async register(req, res) {
         mobile: user.u_mobile,
         image: user.u_image,
         role: convertToRoleData(user.u_role),
-        roleValue: convertToRoleData(user.u_role, true),
+        roleValue: Number(user.u_role) || 0,
         status: user.u_status,
       };
 
@@ -293,7 +321,7 @@ async verifyOldPassword(req, res) {
     if (!oldPassword)
       return sendErrorResponse(req, res, 400, "Old password is required");
 
-    const user = await getUserByUserId(userId);
+    const user = await getUserById(userId);
     if (!user) return sendErrorResponse(req, res, 404, "User not found");
 
     // Convert $2y$ → $2b$ if needed
@@ -417,10 +445,14 @@ async verifyOldPassword(req, res) {
 
   // ===== LOGOUT =====
  async logoutController(req, res) {
-  res.clearCookie("yttmrtck", { path: "/" });
-
-  // Invalidate authorization header usage
-  res.setHeader("Clear-Site-Data", '"cookies", "storage"');
+  // Only drop our refresh cookie. A Clear-Site-Data header here also wiped the
+  // client's storage/cookies asynchronously and could kill a fresh login.
+  res.clearCookie("yttmrtck", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+  });
 
   return sendSuccessResponse(req, res, "Logged out successfully");
 }
@@ -445,7 +477,7 @@ async verifyOldPassword(req, res) {
         mobile: user.u_mobile,
         image: user.u_image,
         role: convertToRoleData(user.u_role),
-        roleValue: convertToRoleData(user.u_role, true),
+        roleValue: Number(user.u_role) || 0,
         status: user.u_status,
       };
 
@@ -469,7 +501,7 @@ async verifyOldPassword(req, res) {
         mobile: u.u_mobile,
         image: u.u_image,
         role: convertToRoleData(u.u_role),
-        roleValue: convertToRoleData(u.u_role, true),
+        roleValue: Number(u.u_role) || 0,
         status: u.u_status,
       }));
       return sendSuccessResponse(req, res, "Users fetched successfully", { users: formatted });
@@ -496,7 +528,7 @@ async verifyOldPassword(req, res) {
         mobile: user.u_mobile,
         image: user.u_image,
         role: convertToRoleData(user.u_role),
-        roleValue: convertToRoleData(user.u_role, true),
+        roleValue: Number(user.u_role) || 0,
         status: user.u_status,
       };
 
@@ -511,13 +543,22 @@ async verifyOldPassword(req, res) {
   async update(req, res) {
     try {
       const { id } = req.params;
-      const { firstName, lastName, gender, mobile, newPassword } = req.body;
+      const { firstName, lastName, gender, mobile, newPassword, oldPassword } = req.body;
 
       const user = await getUserByUserId(id);
       if (!user) return sendErrorResponse(req, res, 404, "User not found");
 
-      // 🔐 Password update (already solid)
+      // 🔐 Password update: enforce the policy, and users changing their own
+      // password must prove they know the current one (admins can reset).
       if (newPassword) {
+        if (!isValidPassword(newPassword)) return sendErrorResponse(req, res, 400, PASSWORD_POLICY_MESSAGE);
+
+        if (req.user.role !== "admin") {
+          const currentHash = user.u_password.replace(/^\$2y(.+)$/i, "$2b$1");
+          const oldValid = oldPassword ? await bcrypt.compare(oldPassword, currentHash) : false;
+          if (!oldValid) return sendErrorResponse(req, res, 401, "Current password is incorrect");
+        }
+
         const hashed = await bcrypt.hash(newPassword, 10);
         await updateUser(id, { u_password: hashed });
       }
@@ -533,7 +574,7 @@ async verifyOldPassword(req, res) {
 
       }
 
-      if (!imageUrl) {
+      if (req.file && !imageUrl) {
         return sendErrorResponse(req, res, 500, "Image upload failed");
       }
       await updateUser(id, {
@@ -548,7 +589,9 @@ async verifyOldPassword(req, res) {
       const updated = await getUserByUserId(id);
 
       return sendSuccessResponse(req, res, "Profile updated", {
-        id: updated.u_user_id,
+        id: updated.id,
+        uUserId: updated.u_user_id,
+        userId: updated.u_user_id,
         firstName: updated.first_name,
         lastName: updated.last_name,
         email: updated.u_email,
@@ -556,7 +599,7 @@ async verifyOldPassword(req, res) {
         mobile: updated.u_mobile,
         image: updated.u_image,
         role: convertToRoleData(updated.u_role),
-        roleValue: convertToRoleData(updated.u_role, true),
+        roleValue: Number(updated.u_role) || 0,
         status: updated.u_status,
       });
     } catch (err) {

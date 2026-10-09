@@ -8,7 +8,8 @@ export default class UserCourseSubscriptionModel {
   static async getUsersWithSubscriptions() {
   const [rows] = await pool.query(`
     SELECT
-      u.u_user_id AS user_id,
+      u.id AS user_id,
+      u.u_user_id,
       CONCAT(u.first_name, ' ', u.last_name) AS user_name,
 
       c.id AS course_id,
@@ -27,7 +28,7 @@ export default class UserCourseSubscriptionModel {
     FROM user u
 
     LEFT JOIN user_course_subscription ucs
-      ON u.u_user_id = CAST(ucs.user_id AS UNSIGNED)
+      ON ucs.user_id = u.id
 
     LEFT JOIN courses c
       ON c.id = ucs.course_id

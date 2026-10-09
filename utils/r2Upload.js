@@ -101,3 +101,19 @@ export function getKeyFromUrl(url) {
   }
 }
 
+
+/**
+ * Best-effort cleanup of stored files after their DB rows are gone.
+ * Never throws: a missing or undeletable R2 object must not fail the request.
+ * @param {Array<string|null|undefined>} urls - stored file URLs
+ */
+export async function deleteR2FilesQuietly(urls) {
+  for (const url of urls || []) {
+    if (!url) continue;
+    try {
+      await deleteFromR2(getKeyFromUrl(url));
+    } catch (err) {
+      console.error("R2 cleanup failed for", url, err.message || err);
+    }
+  }
+}

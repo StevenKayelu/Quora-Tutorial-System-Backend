@@ -55,6 +55,9 @@ export default class SchoolController {
       await SchoolModel.delete(req.params.id);
       res.json({ success: true, message: "School deleted" });
     } catch (error) {
+      if (error.code === "COURSE_IN_USE")
+        return res.status(409).json({ success: false, message: error.message });
+      console.error("delete school error:", error);
       res.status(500).json({ success: false, message: "Error deleting school" });
     }
   }

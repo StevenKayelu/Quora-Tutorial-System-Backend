@@ -71,7 +71,8 @@ export default class UserCourseController {
       if (!course_id) return res.status(400).json({ success: false, message: "Course ID is required." });
 
       const structure = await this.model.getCourseStructure(userId, course_id);
-      if (!structure) return res.status(403).json({ success: false, message: "Not subscribed to this course." });
+      if (!structure || structure.access === false)
+        return res.status(403).json({ success: false, message: "Not subscribed to this course." });
 
       res.status(200).json({ success: true, data: structure });
 
@@ -157,12 +158,38 @@ export default class UserCourseController {
         list.findIndex(item => item.id === course.id && item.name === course.name) === index
       );
 
-      const [amountRow] = await db.query(`
-        SELECT COALESCE(SUM(amount), 0) AS total_amount
-        FROM payment_transaction
+      const [activeMembershipRows] = await db.query(`
+        SELECT id, course_id
+        FROM user_course_subscription
         WHERE user_id = ?
-          AND payment_status = 'success'
+          AND status = 'active'
+          AND expires_at >= CURDATE()
       `, [userId]);
+
+      const activeSubscriptionIds = activeMembershipRows.map(row => row.id).filter(Boolean);
+      const activeCourseIds = activeMembershipRows.map(row => row.course_id).filter(Boolean);
+
+      let totalAmount = 0;
+
+      if (activeSubscriptionIds.length || activeCourseIds.length) {
+        const [amountRows] = await db.query(`
+          SELECT COALESCE(SUM(amount), 0) AS total_amount
+          FROM (
+            SELECT DISTINCT pt.id, pt.amount
+            FROM payment_transaction pt
+            LEFT JOIN payment_transaction_courses ptc
+              ON ptc.transaction_id = pt.transaction_id
+            WHERE pt.user_id = ?
+              AND pt.payment_status = 'success'
+              AND (
+                pt.subscription_id IN (?)
+                OR ptc.course_id IN (?)
+              )
+          ) active_payments
+        `, [userId, activeSubscriptionIds, activeCourseIds]);
+
+        totalAmount = Number(amountRows?.[0]?.total_amount || 0);
+      }
 
       const latestExpiry = (filteredSubscriptions.length ? filteredSubscriptions : subscriptions)
         .map(sub => sub.expires_at)
@@ -180,10 +207,11 @@ export default class UserCourseController {
         studentIdDisplay: studentId,
         programme,
         yearOfStudy: currentTerm ? `Year ${currentTerm.term_number}` : "Current Term",
-        academicYear: currentTerm ? `${currentTerm.start_date?.slice(0, 4) || ""} / ${currentTerm.end_date?.slice(0, 4) || ""}`.trim().replace(/\s\/$/, "") : "N/A",
+        // mysql2 returns DATE columns as Date objects, not strings
+        academicYear: currentTerm ? `${new Date(currentTerm.start_date).getFullYear()} / ${new Date(currentTerm.end_date).getFullYear()}` : "N/A",
         term: currentTerm ? `Term ${currentTerm.term_number}` : "Membership",
         courses,
-        amountPaid: Number(amountRow?.total_amount || 0).toFixed(2),
+        amountPaid: Number(totalAmount).toFixed(2),
         cardNumber,
         validUntil: latestExpiry,
         validityText: latestExpiry ? `Valid until ${new Date(latestExpiry).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}` : "No expiry set",

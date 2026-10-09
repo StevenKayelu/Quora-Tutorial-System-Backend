@@ -1,7 +1,6 @@
 import express from "express";
 import paymentController from "../../../controllers/api/PaymentController.js";
 import { verifyTokenMiddleware } from "../../../middlewares/tokenMiddleware.js";
-import UserSubscriptionService from "../../../services/UserSubscriptionService.js";
 
 const router = express.Router();
 
@@ -12,19 +11,6 @@ router.use(express.urlencoded({ extended: true }));
 // -------------------- MAIN PAYMENT ROUTE --------------------
 router.post("/initiate", verifyTokenMiddleware, (req, res) =>
   paymentController.initiatePayment(req, res)
-);
-
-// -------------------- CALLBACKS (No Token Required) --------------------
-router.post("/callback/mtn", (req, res) =>
-  paymentController.mtnCallback(req, res)
-);
-
-router.post("/callback/airtel", (req, res) =>
-  paymentController.airtelCallback(req, res)
-);
-
-router.post("/callback/zamtel", (req, res) =>
-  paymentController.zamtelCallback(req, res)
 );
 
 // -------------------- VERIFY MONEYUNIFY --------------------

@@ -22,7 +22,7 @@ export default class PaymentTransactionModel {
 
 static async getCoursesByTransaction(transactionIdString) {
   const [rows] = await pool.query(`
-    SELECT c.id, c.course_id
+    SELECT c.id, c.course_name, c.amount
     FROM payment_transaction_courses ptc
     JOIN courses c ON c.id = ptc.course_id
     WHERE ptc.transaction_id = ?

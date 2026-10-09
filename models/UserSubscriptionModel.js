@@ -3,28 +3,31 @@ import pool from "../config/db.js";
 export default class UserSubscriptionModel {
 
   /**
-   * Get course IDs that the user has successfully paid for
+   * Get course IDs the user currently has an active, unexpired subscription to
    */
   static async getSubscribedCourseIds(userId) {
-  const [rows] = await pool.query(`
-    SELECT DISTINCT ptc.course_id
-    FROM payment_transaction pt
-    JOIN payment_transaction_courses ptc 
-      ON pt.transaction_id = ptc.transaction_id
-    WHERE pt.user_id = ? 
-      AND pt.payment_status = 'success'
-  `, [userId]);
+    const [rows] = await pool.query(`
+      SELECT DISTINCT course_id
+      FROM user_course_subscription
+      WHERE user_id = ?
+        AND status = 'active'
+        AND expires_at >= CURDATE()
+    `, [userId]);
 
-  return rows.map(r => r.course_id);
-}
+    return rows.map(r => r.course_id);
+  }
+
   /**
    * Check if user is subscribed to a course
    */
   static async isSubscribed(userId, courseId) {
     const [rows] = await pool.query(`
       SELECT 1
-      FROM payment_transaction
-      WHERE user_id=? AND subscription_id=? AND payment_status='success'
+      FROM user_course_subscription
+      WHERE user_id = ?
+        AND course_id = ?
+        AND status = 'active'
+        AND expires_at >= CURDATE()
       LIMIT 1
     `, [userId, courseId]);
 

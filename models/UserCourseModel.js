@@ -9,7 +9,8 @@ export default class UserCourseModel {
     const [rows] = await db.query(`
       SELECT DISTINCT s.id, s.school_name
       FROM school s
-      JOIN courses c ON c.school_id = s.id
+      JOIN courses c ON (c.school_id = s.id
+        OR EXISTS (SELECT 1 FROM course_school cs WHERE cs.course_id = c.id AND cs.school_id = s.id))
       JOIN user_course_subscription ucs ON ucs.course_id = c.id
       WHERE ucs.user_id=?
       AND (
@@ -42,9 +43,10 @@ export default class UserCourseModel {
     JOIN user_course_subscription ucs 
       ON ucs.course_id = c.id
     WHERE ucs.user_id=?
-      AND c.school_id=?
+      AND (c.school_id=?
+        OR EXISTS (SELECT 1 FROM course_school cs WHERE cs.course_id = c.id AND cs.school_id = ?))
     ORDER BY c.course_name ASC
-  `, [userId, schoolId]);
+  `, [userId, schoolId, schoolId]);
 
   return rows;
 }

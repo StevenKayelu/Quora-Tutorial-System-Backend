@@ -11,7 +11,9 @@ router.use(express.urlencoded({ extended: true }));
 router.get("/", verifyTokenMiddleware, (req, res) => courseController.getAll(req, res));
 router.get("/:id", verifyTokenMiddleware, (req, res) => courseController.getById(req, res));
 router.post("/", verifyTokenMiddleware, (req, res) => courseController.create(req, res));
+router.post("/assign-school", verifyTokenMiddleware, (req, res) => courseController.assignToSchool(req, res));
 router.put("/:id", verifyTokenMiddleware, (req, res) => courseController.update(req, res));
+router.delete("/:id/schools/:schoolId", verifyTokenMiddleware, (req, res) => courseController.unassignFromSchool(req, res));
 router.delete("/:id", verifyTokenMiddleware, (req, res) => courseController.delete(req, res));
 
 router.get("*", (req, res) =>

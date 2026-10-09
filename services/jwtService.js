@@ -23,7 +23,7 @@ export const sign = async (data, seconds = 30 * 60 * 60 * 24) => {
 export const verifyToken = (token) => {
   if (!token) return null;
   try {
-    return jwt.verify(token, publicKey, { algorithm: "RS256" });
+    return jwt.verify(token, publicKey, { algorithms: ["RS256"] });
   } catch {
     return null;
   }
@@ -74,8 +74,8 @@ export const verifyRefreshToken = async (req) => {
             gender: user.gender,
             mobile: user.u_mobile,
             image: user.u_image,
-            role: user.u_role ? convertToRoleData(user.u_role) : "User",
-            roleValue: user.u_role || 0,
+            role: convertToRoleData(Number(user.u_role)) || "user",
+            roleValue: Number(user.u_role) || 0,
             status: user.u_status || "unsubscribed",
           };
 

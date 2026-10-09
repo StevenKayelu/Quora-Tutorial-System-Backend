@@ -315,6 +315,24 @@ export const markEmailVerified = async (tokenHash) => {
   }
 };
 
+// 🔹 Mark a user's email as verified directly (accounts created by an admin)
+export const markEmailVerifiedForUser = async (userId) => {
+  try {
+    const [result] = await pool.query(
+      `UPDATE user
+       SET email_verified_at = COALESCE(email_verified_at, NOW()),
+           email_verification_token = NULL,
+           email_verification_expires = NULL
+       WHERE u_user_id = ?`,
+      [userId]
+    );
+    return result.affectedRows > 0;
+  } catch (error) {
+    console.error("markEmailVerifiedForUser error:", error);
+    return false;
+  }
+};
+
 // 🔹 Store a (hashed) password reset token
 export const setPasswordResetToken = async (userId, tokenHash, expiresInMinutes) => {
   try {
