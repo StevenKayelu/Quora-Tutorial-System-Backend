@@ -11,8 +11,11 @@ const TYPE_LABEL = {
 };
 
 // Inserts one notification per user with an active, unexpired subscription
-// (same rule as canAccessCourse in utils/courseAccess.js).
-const notifySubscribers = async ({ type, itemId, itemTitle, courseId, termId }) => {
+// (same rule as canAccessCourse in utils/courseAccess.js). For free items
+// (isFree) it also includes every student who sees the item in Free to
+// explore: students of a school that offers the course, and students who
+// haven't chosen a school (same rule as TopicMaterialController.getFree).
+const notifySubscribers = async ({ type, itemId, itemTitle, courseId, termId, isFree = false }) => {
   if (!courseId || !itemId) return 0;
 
   const [[context]] = await pool.query(
@@ -28,6 +31,29 @@ const notifySubscribers = async ({ type, itemId, itemTitle, courseId, termId }) 
   const message = `${itemTitle || "Untitled"}${
     context.term_number ? ` — Term ${context.term_number}` : ""
   }`.slice(0, 500);
+
+  if (isFree) {
+    const [result] = await pool.query(
+      `INSERT INTO notification
+         (user_id, type, title, message, school_id, course_id, term_id, item_id)
+       SELECT u.id, ?, ?, ?, ?, ?, ?, ?
+       FROM user u
+       WHERE u.id IN (
+               SELECT ucs.user_id
+               FROM user_course_subscription ucs
+               WHERE ucs.course_id = ?
+                 AND ucs.status = 'active'
+                 AND ucs.expires_at >= CURDATE()
+             )
+          OR (u.u_role = 0
+              AND (u.school_id IS NULL
+                   OR u.school_id IN (SELECT school_id FROM courses WHERE id = ?
+                                      UNION
+                                      SELECT school_id FROM course_school WHERE course_id = ?)))`,
+      [type, title.slice(0, 255), message, context.school_id, courseId, termId || null, itemId, courseId, courseId, courseId]
+    );
+    return result.affectedRows;
+  }
 
   const [result] = await pool.query(
     `INSERT INTO notification
@@ -57,7 +83,8 @@ export const notifyNewTopicMaterial = (materialId) =>
   safely("notifyNewTopicMaterial", async () => {
     const [[m]] = await pool.query(
       `SELECT tm.id, tm.title, tm.material_type,
-              t.course_id, COALESCE(t.term_id, tm.term_id) AS term_id
+              t.course_id, COALESCE(t.term_id, tm.term_id) AS term_id,
+              (COALESCE(st.is_free, 0) = 1 OR COALESCE(t.is_free, 0) = 1) AS is_free
        FROM topic_material tm
        JOIN subtopic st ON st.id = tm.subtopic_id
        JOIN topic t ON t.id = st.topic_id
@@ -71,6 +98,7 @@ export const notifyNewTopicMaterial = (materialId) =>
       itemTitle: m.title,
       courseId: m.course_id,
       termId: m.term_id,
+      isFree: Number(m.is_free) === 1,
     });
   });
 

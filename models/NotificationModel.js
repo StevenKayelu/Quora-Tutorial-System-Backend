@@ -5,7 +5,16 @@ import pool from "../config/db.js";
 export const getNotificationsForUser = async (userId, limit = 20) => {
   const [rows] = await pool.query(
     `SELECT id, type, title, message, school_id, course_id, term_id, item_id,
-            is_read, created_at
+            is_read, created_at,
+            -- videos/notes in a topic or subtopic that is currently marked free
+            (type IN ('video', 'note') AND EXISTS (
+              SELECT 1
+              FROM topic_material tm
+              JOIN subtopic st ON st.id = tm.subtopic_id
+              JOIN topic t ON t.id = st.topic_id
+              WHERE tm.id = notification.item_id
+                AND (COALESCE(st.is_free, 0) = 1 OR COALESCE(t.is_free, 0) = 1)
+            )) AS is_free
      FROM notification
      WHERE user_id = ?
      ORDER BY created_at DESC, id DESC
