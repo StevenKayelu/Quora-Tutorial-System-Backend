@@ -1,5 +1,6 @@
 // services/mailService.js
 import nodemailer from "nodemailer";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -24,6 +25,64 @@ const getTransporter = () => {
   return transporter;
 };
 
+// Gmail API over HTTPS (port 443), for hosts that block outbound SMTP ports
+const isGmailApiConfigured = () =>
+  Boolean(
+    process.env.GMAIL_CLIENT_ID &&
+      process.env.GMAIL_CLIENT_SECRET &&
+      process.env.GMAIL_REFRESH_TOKEN &&
+      process.env.GMAIL_SENDER
+  );
+
+let gmailAccessToken = null;
+let gmailAccessTokenExpiresAt = 0;
+const getGmailAccessToken = async () => {
+  // Reuse the token until a minute before it expires
+  if (gmailAccessToken && Date.now() < gmailAccessTokenExpiresAt - 60_000) {
+    return gmailAccessToken;
+  }
+
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.GMAIL_CLIENT_ID,
+      client_secret: process.env.GMAIL_CLIENT_SECRET,
+      refresh_token: process.env.GMAIL_REFRESH_TOKEN,
+      grant_type: "refresh_token",
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.access_token) {
+    throw new Error(
+      `Gmail token request failed (${response.status}): ${data.error || ""} ${data.error_description || ""}`.trim()
+    );
+  }
+
+  gmailAccessToken = data.access_token;
+  gmailAccessTokenExpiresAt = Date.now() + (Number(data.expires_in) || 3600) * 1000;
+  return gmailAccessToken;
+};
+
+const sendViaGmailApi = async ({ from, to, subject, html, text }) => {
+  const raw = await new MailComposer({ from, to, subject, html, text }).compile().build();
+  const accessToken = await getGmailAccessToken();
+
+  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ raw: raw.toString("base64url") }),
+  });
+  if (!response.ok) {
+    if (response.status === 401) gmailAccessToken = null; // force a fresh token next time
+    const body = await response.text().catch(() => "");
+    throw new Error(`Gmail send failed (${response.status}): ${body}`);
+  }
+};
+
 const escapeHtml = (value) =>
   String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -33,11 +92,28 @@ const escapeHtml = (value) =>
     .replace(/'/g, "&#39;");
 
 /**
- * Sends an email, or logs it to the console when SMTP isn't configured
- * (so local dev works without real credentials). Never throws.
- * Returns true if the email was sent (or logged), false on SMTP failure.
+ * Sends an email through the Gmail API when GMAIL_* is configured, otherwise
+ * SMTP, otherwise logs it to the console (so local dev works without real
+ * credentials). Never throws.
+ * Returns true if the email was sent (or logged), false on send failure.
  */
 const sendMail = async ({ to, subject, html, text }) => {
+  if (isGmailApiConfigured()) {
+    try {
+      await sendViaGmailApi({
+        from: `"${BRAND_NAME}" <${process.env.GMAIL_SENDER}>`,
+        to,
+        subject,
+        html,
+        text,
+      });
+      return true;
+    } catch (error) {
+      console.error("sendMail error:", error);
+      return false;
+    }
+  }
+
   if (!isSmtpConfigured()) {
     console.log(
       [
