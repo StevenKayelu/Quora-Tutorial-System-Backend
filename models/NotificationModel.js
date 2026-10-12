@@ -1,13 +1,17 @@
 import pool from "../config/db.js";
+import { DISPLAY_SCHOOL_SQL } from "./UserCourseModel.js";
 
 // All queries are scoped to the owner (user.id)
 
 export const getNotificationsForUser = async (userId, limit = 20) => {
   const [rows] = await pool.query(
-    `SELECT id, type, title, message, school_id, course_id, term_id, item_id,
-            is_read, created_at,
+    `SELECT notification.id, notification.type, notification.title, notification.message,
+            -- the school My Courses lists this course under for this student
+            COALESCE(${DISPLAY_SCHOOL_SQL}, notification.school_id) AS school_id,
+            notification.course_id, notification.term_id, notification.item_id,
+            notification.is_read, notification.created_at,
             -- videos/notes in a topic or subtopic that is currently marked free
-            (type IN ('video', 'note') AND EXISTS (
+            (notification.type IN ('video', 'note') AND EXISTS (
               SELECT 1
               FROM topic_material tm
               JOIN subtopic st ON st.id = tm.subtopic_id
@@ -16,8 +20,10 @@ export const getNotificationsForUser = async (userId, limit = 20) => {
                 AND (COALESCE(st.is_free, 0) = 1 OR COALESCE(t.is_free, 0) = 1)
             )) AS is_free
      FROM notification
-     WHERE user_id = ?
-     ORDER BY created_at DESC, id DESC
+     JOIN user u ON u.id = notification.user_id
+     LEFT JOIN courses c ON c.id = notification.course_id
+     WHERE notification.user_id = ?
+     ORDER BY notification.created_at DESC, notification.id DESC
      LIMIT ?`,
     [userId, limit]
   );

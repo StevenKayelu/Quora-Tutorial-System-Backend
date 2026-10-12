@@ -1,5 +1,18 @@
 import db from "../config/db.js";
 
+// The one school a subscribed course is listed under for a student (needs
+// aliases c = courses, u = user): the student's own school when it offers the
+// course (directly or shared through course_school), otherwise the course's
+// main school.
+export const DISPLAY_SCHOOL_SQL = `
+  CASE
+    WHEN u.school_id IS NOT NULL
+     AND (c.school_id = u.school_id
+          OR EXISTS (SELECT 1 FROM course_school cs WHERE cs.course_id = c.id AND cs.school_id = u.school_id))
+    THEN u.school_id
+    ELSE COALESCE(c.school_id, (SELECT MIN(cs2.school_id) FROM course_school cs2 WHERE cs2.course_id = c.id))
+  END`;
+
 export default class UserCourseModel {
 
   /**
@@ -8,10 +21,10 @@ export default class UserCourseModel {
   async getSchoolsByUser(userId) {
     const [rows] = await db.query(`
       SELECT DISTINCT s.id, s.school_name
-      FROM school s
-      JOIN courses c ON (c.school_id = s.id
-        OR EXISTS (SELECT 1 FROM course_school cs WHERE cs.course_id = c.id AND cs.school_id = s.id))
-      JOIN user_course_subscription ucs ON ucs.course_id = c.id
+      FROM user_course_subscription ucs
+      JOIN courses c ON c.id = ucs.course_id
+      JOIN user u ON u.id = ucs.user_id
+      JOIN school s ON s.id = ${DISPLAY_SCHOOL_SQL}
       WHERE ucs.user_id=?
       AND (
             (ucs.status='active' AND ucs.expires_at >= CURDATE())
@@ -42,11 +55,11 @@ export default class UserCourseModel {
     FROM courses c
     JOIN user_course_subscription ucs 
       ON ucs.course_id = c.id
+    JOIN user u ON u.id = ucs.user_id
     WHERE ucs.user_id=?
-      AND (c.school_id=?
-        OR EXISTS (SELECT 1 FROM course_school cs WHERE cs.course_id = c.id AND cs.school_id = ?))
+      AND ${DISPLAY_SCHOOL_SQL} = ?
     ORDER BY c.course_name ASC
-  `, [userId, schoolId, schoolId]);
+  `, [userId, schoolId]);
 
   return rows;
 }
