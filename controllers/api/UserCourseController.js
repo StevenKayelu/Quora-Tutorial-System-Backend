@@ -199,6 +199,16 @@ export default class UserCourseController {
         .filter(Boolean)
         .sort((a, b) => new Date(b) - new Date(a))[0] || currentTerm?.end_date || null;
 
+      // End date of the term the card's subscriptions belong to (via ucs.term_id),
+      // as YYYY-MM-DD; null when no subscription is linked to a term
+      const termEnd = (filteredSubscriptions.length ? filteredSubscriptions : subscriptions)
+        .filter(sub => sub.term_id && sub.end_date)
+        .map(sub => new Date(sub.end_date))
+        .sort((a, b) => b - a)[0];
+      const termEndDate = termEnd
+        ? `${termEnd.getFullYear()}-${String(termEnd.getMonth() + 1).padStart(2, "0")}-${String(termEnd.getDate()).padStart(2, "0")}`
+        : null;
+
       const studentName = `${user.first_name || ""} ${user.last_name || ""}`.trim() || "Student";
       const studentId = user.u_user_id || String(user.id);
       const programme = [...new Set((courses || []).map(course => course.school).filter(Boolean))].join(", ") || "General Studies";
@@ -220,6 +230,7 @@ export default class UserCourseController {
         amountPaid: Number(totalAmount).toFixed(2),
         cardNumber,
         validUntil: latestExpiry,
+        termEndDate,
         validityText: latestExpiry ? `Valid until ${new Date(latestExpiry).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}` : "No expiry set",
         photo: user.u_image || null,
         email: user.u_email || null,
