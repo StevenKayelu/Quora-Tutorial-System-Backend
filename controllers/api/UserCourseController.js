@@ -162,7 +162,7 @@ export default class UserCourseController {
       );
 
       const [activeMembershipRows] = await db.query(`
-        SELECT id, course_id
+        SELECT id, course_id, amount_paid
         FROM user_course_subscription
         WHERE user_id = ?
           AND status = 'active'
@@ -193,6 +193,9 @@ export default class UserCourseController {
 
         totalAmount = Number(amountRows?.[0]?.total_amount || 0);
       }
+
+      // Plus amounts the admin recorded when assigning courses (paid outside the system)
+      totalAmount += activeMembershipRows.reduce((sum, row) => sum + Number(row.amount_paid || 0), 0);
 
       const latestExpiry = (filteredSubscriptions.length ? filteredSubscriptions : subscriptions)
         .map(sub => sub.expires_at)

@@ -72,7 +72,7 @@ export default class UserCourseSubscriptionModel {
   // =====================================
   // CREATE subscription (sets expiry automatically)
   // =====================================
-  static async create({ user_id, course_id, term_id, source = "admin" }) {
+  static async create({ user_id, course_id, term_id, source = "admin", amount_paid = null }) {
 
     // Get term end date
     const [termRows] = await pool.query(
@@ -88,9 +88,9 @@ export default class UserCourseSubscriptionModel {
 
     const [result] = await pool.query(`
       INSERT INTO user_course_subscription
-      (user_id, course_id, term_id, status, subscribed_at, expires_at, source)
-      VALUES (?, ?, ?, 'active', NOW(), ?, ?)
-    `, [user_id, course_id, term_id, expires_at, source]);
+      (user_id, course_id, term_id, status, subscribed_at, expires_at, source, amount_paid)
+      VALUES (?, ?, ?, 'active', NOW(), ?, ?, ?)
+    `, [user_id, course_id, term_id, expires_at, source, amount_paid]);
 
     return result.insertId;
   }

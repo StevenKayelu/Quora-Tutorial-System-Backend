@@ -45,12 +45,21 @@ export default class UserCourseSubscriptionController {
       return res.status(403).json({ success: false, message: "Access denied" });
 
     try {
-      const { user_id, course_id, term_id } = req.body;
+      const { user_id, course_id, term_id, amount_paid } = req.body;
 
       if (!term_id)
         return res.status(400).json({
           success: false,
           message: "term_id is required"
+        });
+
+      // Optional: what the student paid outside the system (shown on the card)
+      const hasAmount = amount_paid !== undefined && amount_paid !== null && String(amount_paid).trim() !== "";
+      const amount = hasAmount ? Number(amount_paid) : null;
+      if (hasAmount && (!Number.isFinite(amount) || amount < 0 || amount > 99999999.99))
+        return res.status(400).json({
+          success: false,
+          message: "Amount paid must be a number of 0 or more"
         });
 
       const exists = await UserCourseSubscriptionModel.exists(
@@ -69,7 +78,8 @@ export default class UserCourseSubscriptionController {
         user_id,
         course_id,
         term_id,
-        source: "admin"
+        source: "admin",
+        amount_paid: amount === null ? null : Math.round(amount * 100) / 100
       });
 
       await PaymentModel.updateUserStatus(user_id);
